@@ -1,0 +1,7 @@
+openai
+python-dotenv
+coingecko-sdk
+gspread
+google-auth
+google-auth-oauthlib
+pandas
