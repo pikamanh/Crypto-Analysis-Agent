@@ -27,14 +27,18 @@ TOOL_SCHEMAS = [
             "function": {
                 "name": "get_protocol_data",
                 "description": """
-                    Get information of protocol when receive name token
-    
-                    Use `name` when the user give a ticker (e.g "btc", "eth")
+                    Get DeFi protocol information (TVL, category, funding raises, hacks) for a token.
+
+                    Use `symbol` when the user gives a ticker (e.g. "AAVE", "UNI").
+                    Use `name` when the user gives a full project name (e.g. "Aave", "Uniswap").
+                    Exactly one of `name` or `symbol` should be provided.
+                    Returns nothing if the token has no associated DeFi protocol.
                     """,
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Symbol token."},
+                        "name": {"type": "string", "description": "Full token name"},
+                        "symbol": {"type": "string", "description": "Token symbol"},
                     },
                 },
             },

@@ -6,3 +6,4 @@ requests
 google-auth
 google-auth-oauthlib
 pandas
+defillama-sdk

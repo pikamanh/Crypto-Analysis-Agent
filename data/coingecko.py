@@ -78,37 +78,6 @@ class CoingeckoData:
         self.gg = GoogleSheets()
         self._coin_id_df = None
 
-    def get_coin_market(self):
-        if self.client is None:
-            raise RuntimeError("Coingecko client not initialized")
-        list_coin = list()
-
-        responses = self.client.coins.markets.get(
-            vs_currency="usd"
-        )
-
-        if len(responses) == 0:
-            logger.error("Please try again after 60 seconds.")
-            return
-
-        for res in responses:
-            coin_info = CoinInfo(
-                id = res.id,
-                symbol = res.symbol,
-                name = res.name,
-                curr_price = res.current_price,
-                market_cap = res.market_cap,
-                fdv = res.fully_diluted_valuation,
-                total_volume = res.total_volume,
-                total_supply = res.total_supply,
-                circulating_supply = res.circulating_supply,
-                max_supply = res.max_supply,
-            )
-            list_coin.append(coin_info)
-
-        logger.info("Get coin in market successfully.")
-        return AllCoin(list_coin=list_coin)
-
     def get_coin_by_id(self, name: str = None, symbol: str = None) -> Optional[CoinDetail]:
         if self.client is None:
             raise RuntimeError("Coingecko client not initialized")
