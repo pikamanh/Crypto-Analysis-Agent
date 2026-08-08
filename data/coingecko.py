@@ -7,7 +7,7 @@ from coingecko_sdk import Coingecko
 from pydantic import BaseModel
 from typing import List, Optional, Literal
 
-from sheets import GoogleSheets
+from data.sheets import GoogleSheets
 
 load_dotenv()
 
@@ -17,6 +17,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+_data_instance = None
 
 class CoinInfo(BaseModel):
     id: str
@@ -55,12 +56,16 @@ class CoingeckoData:
             )
             logger.info("Connected Coingecko successfully.")
         except Exception as e:
+            self.client = None
             logger.error("Connected Coingecko failed.")
             logger.exception(e)
 
         self.gg = GoogleSheets()
+        self._coin_id_df = None
 
     def get_coin_market(self):
+        if self.client is None:
+            raise RuntimeError("Coingecko client not initialized")
         list_coin = list()
 
         responses = self.client.coins.markets.get(
@@ -90,12 +95,19 @@ class CoingeckoData:
         return AllCoin(list_coin=list_coin)
 
     def get_coin_by_id(self, name: str = None, symbol: str = None) -> Optional[CoinDetail]:
-        df = self.gg.get_coin_id()
+        if self.client is None:
+            raise RuntimeError("Coingecko client not initialized")
+        if self._coin_id_df is None:
+            self._coin_id_df = self.gg.get_coin_id()
+
+        df = self._coin_id_df
 
         if name:
             id = df.loc[df['Name'].str.lower() == name.lower()]['ID']
         elif symbol:
             id = df.loc[df['Symbol'].str.lower() == symbol.lower()]['ID']
+        else:
+            raise ValueError("Name or symbol is None. Please provided.")
 
         if id.empty:
             logger.error(f"Coin not found: name={name}, symbol={symbol}")
@@ -120,6 +132,12 @@ class CoingeckoData:
 
         logger.info(f"Get coin by id successfully: {coin_detail.id}")
         return coin_detail
+
+def get_coin_data(name: str = None, symbol: str = None):
+    global _data_instance
+    if _data_instance is None:
+        _data_instance = CoingeckoData()
+    return _data_instance.get_coin_by_id(name=name, symbol=symbol)
 
 if __name__ == "__main__":
     coingecko_data = CoingeckoData()
