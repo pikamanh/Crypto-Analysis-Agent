@@ -56,7 +56,6 @@ def analyze_price_action(
 
     payload = snapshot.model_dump(exclude={"candles"})
     payload["last_close"] = snapshot.candles[-1].close if snapshot.candles else None
-    print(payload)
 
     response = client.chat.completions.create(
         model=os.getenv("MODEL"),

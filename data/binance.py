@@ -1,8 +1,10 @@
 import logging
 from typing import Optional
+import os
 
 from binance_sdk_spot.spot import Spot
 from binance_common.configuration import ConfigurationRestAPI
+from binance_common.constants import SPOT_REST_API_PROD_URL
 
 from data.sheets import GoogleSheets
 from data.indicators import Candle, PriceActionSnapshot, build_price_action_snapshot
@@ -15,10 +17,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 _data_instance = None
 
+configuration = ConfigurationRestAPI(api_key=os.getenv("BINANCE_API_KEY"), api_secret=os.getenv("BINANCE_SECRET_KEY"), base_path=SPOT_REST_API_PROD_URL)
 
 class BinanceData:
     def __init__(self):
-        self.client = Spot()
+        self.client = Spot(config_rest_api=configuration)
         logger.info("Connected Binance successfully.")
 
         self.gg = GoogleSheets()
