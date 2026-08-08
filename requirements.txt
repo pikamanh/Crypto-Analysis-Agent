@@ -7,3 +7,5 @@ google-auth
 google-auth-oauthlib
 pandas
 defillama-sdk
+binance-sdk-spot
+langgraph

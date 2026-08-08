@@ -1,6 +1,5 @@
 import os
 import logging
-import pandas as pd
 from dotenv import load_dotenv
 
 from coingecko_sdk import Coingecko
@@ -8,6 +7,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Literal
 
 from data.sheets import GoogleSheets
+from data.indicators import Candle, PriceActionSnapshot, build_price_action_snapshot
 
 load_dotenv()
 
@@ -50,6 +50,9 @@ class CoinDetail(BaseModel):
     github_commit_count_4_weeks: Optional[int] = None
     current_price_usd: Optional[float] = None
     market_cap_usd: Optional[float] = None
+    tvl: Optional[float] = None
+    mcp_tvl_ratio: Optional[float] = None
+    fdv_tvl_ratio: Optional[float] = None
     market_cap_rank: Optional[int] = None
     fdv_usd: Optional[float] = None
     total_volume_usd: Optional[float] = None
@@ -78,9 +81,7 @@ class CoingeckoData:
         self.gg = GoogleSheets()
         self._coin_id_df = None
 
-    def get_coin_by_id(self, name: str = None, symbol: str = None) -> Optional[CoinDetail]:
-        if self.client is None:
-            raise RuntimeError("Coingecko client not initialized")
+    def _resolve_id(self, name: str = None, symbol: str = None) -> Optional[str]:
         if self._coin_id_df is None:
             self._coin_id_df = self.gg.get_coin_id()
 
@@ -93,11 +94,18 @@ class CoingeckoData:
         else:
             raise ValueError("Name or symbol is None. Please provided.")
 
-        if id.empty:
+        return id.values[0] if not id.empty else None
+
+    def get_coin_by_id(self, name: str = None, symbol: str = None) -> Optional[CoinDetail]:
+        if self.client is None:
+            raise RuntimeError("Coingecko client not initialized")
+
+        id = self._resolve_id(name=name, symbol=symbol)
+        if id is None:
             logger.error(f"Coin not found: name={name}, symbol={symbol}")
             return None
 
-        response = self.client.coins.get_id(id.values[0])
+        response = self.client.coins.get_id(id)
         market = response.market_data
         links = response.links
         community = response.community_data
@@ -119,6 +127,9 @@ class CoingeckoData:
             github_commit_count_4_weeks=developer.commit_count_4_weeks if developer else None,
             current_price_usd=(market.current_price or {}).get("usd") if market else None,
             market_cap_usd=(market.market_cap or {}).get("usd") if market else None,
+            tvl=(market.total_value_locked or {}).get("usd") if market else None,
+            mcp_tvl_ratio=market.mcap_to_tvl_ratio if market else None,
+            fdv_tvl_ratio=market.fdv_to_tvl_ratio if market else None,
             market_cap_rank=market.market_cap_rank if market else None,
             fdv_usd=(market.fully_diluted_valuation or {}).get("usd") if market else None,
             total_volume_usd=(market.total_volume or {}).get("usd") if market else None,
@@ -135,11 +146,47 @@ class CoingeckoData:
         logger.info(f"Get coin by id successfully: {coin_detail.id}")
         return coin_detail
 
+    def get_price_action(
+        self,
+        name: str = None,
+        symbol: str = None,
+        days: Literal["1", "7", "14", "30", "90", "180", "365"] = "30",
+    ) -> Optional[PriceActionSnapshot]:
+        if self.client is None:
+            raise RuntimeError("Coingecko client not initialized")
+
+        id = self._resolve_id(name=name, symbol=symbol)
+        if id is None:
+            logger.error(f"Coin not found: name={name}, symbol={symbol}")
+            return None
+
+        raw = self.client.coins.ohlc.get(id, days=days, vs_currency="usd")
+        if not raw:
+            logger.error(f"No OHLC data for {id}")
+            return None
+
+        candles = [
+            Candle(timestamp=int(row[0]), open=row[1], high=row[2], low=row[3], close=row[4])
+            for row in raw
+        ]
+        snapshot = build_price_action_snapshot(
+            source="coingecko", id=id, interval=f"{days}d", candles=candles
+        )
+
+        logger.info(f"Get price action successfully: {id}")
+        return snapshot
+
 def get_coin_data(name: str = None, symbol: str = None):
     global _data_instance
     if _data_instance is None:
         _data_instance = CoingeckoData()
     return _data_instance.get_coin_by_id(name=name, symbol=symbol)
+
+def get_price_action_data(name: str = None, symbol: str = None, days: str = "30"):
+    global _data_instance
+    if _data_instance is None:
+        _data_instance = CoingeckoData()
+    return _data_instance.get_price_action(name=name, symbol=symbol, days=days)
 
 if __name__ == "__main__":
     coingecko_data = CoingeckoData()

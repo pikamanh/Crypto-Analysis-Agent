@@ -3,7 +3,7 @@
 ## 1. Mục tiêu
 Xây dựng hệ thống multi-agent hỗ trợ:
 - Research & báo cáo dự án crypto (whitepaper, docs, tổng quan)
-- Phân tích on-chain & thị trường (giá, volume, TVL, holder, xu hướng)
+- Phân tích thị trường & kỹ thuật (giá, volume, TVL, chỉ báo kỹ thuật, xu hướng)
 - Tổng hợp tín hiệu giao dịch (không tự động đặt lệnh, chỉ đề xuất)
 - Trợ lý hỏi-đáp (chatbot) tra cứu dữ liệu real-time
 
@@ -19,7 +19,8 @@ Xây dựng hệ thống multi-agent hỗ trợ:
 |---|---|---|
 | Giá / market cap / volume | CoinGecko API | free, không cần key cho basic endpoints |
 | TVL / project info | DeFiLlama API | free |
-| On-chain (holder, tx) | Etherscan / BscScan API | free tier, cần key |
+| OHLC / candles (dài hạn) | CoinGecko API | free, daily candle cho xu hướng dài hạn |
+| OHLC / candles (ngắn hạn, 15m) | Binance API | free, không cần key cho market data public |
 | Tin tức / sentiment | CryptoPanic API hoặc RSS | free |
 | Social (X/Twitter) | để giai đoạn sau | API trả phí |
 
@@ -28,7 +29,7 @@ Xây dựng hệ thống multi-agent hỗ trợ:
 Orchestrator Agent (LangGraph)
  ├─ Research Agent   → whitepaper/docs, tóm tắt dự án
  ├─ Market Agent     → giá, volume, market cap (CoinGecko)
- ├─ On-chain Agent   → TVL, holder, transaction (DeFiLlama/Etherscan)
+ ├─ Price Action Agent → OHLC, support/resistance, xu hướng kỹ thuật (Binance 15m + CoinGecko daily)
  ├─ Sentiment Agent  → tin tức, social (CryptoPanic)
  └─ Signal Agent     → tổng hợp toàn bộ → đề xuất tín hiệu
 Chatbot/API layer    → nhận câu hỏi người dùng, route tới orchestrator
@@ -37,10 +38,10 @@ Chatbot/API layer    → nhận câu hỏi người dùng, route tới orchestra
 ## 5. Cấu trúc thư mục đề xuất
 ```
 crypto-researcher/
-├── agents/            # logic từng agent (research, market, onchain, sentiment, signal, orchestrator)
-├── tools/              # wrapper gọi API bên ngoài (coingecko.py, defillama.py, etherscan.py, cryptopanic.py)
-├── data/               # cache local, kết quả tạm (nếu cần)
-├── api/                 # FastAPI app (Giai đoạn 4)
+├── agents/            # logic từng agent (research, market, price_action, sentiment, signal)
+├── tools/             # wrapper mỏng cho LLM tool-calling + registry.py (coingecko_tools.py, defillama_tools.py, binance_tools.py)
+├── data/              # client gọi API bên ngoài + models (coingecko.py, defillama.py, binance.py, sheets.py, indicators.py)
+├── api/               # FastAPI app (Giai đoạn 4)
 ├── tests/
 ├── requirements.txt
 └── README.md
@@ -52,15 +53,14 @@ crypto-researcher/
 - [x] Setup repo: venv, `requirements.txt`, cấu trúc thư mục ở mục 5
 - [x] Cấu hình LLM API key (.env, không commit)
 - [x] Viết `tools/coingecko.py`, `tools/defillama.py` (hàm gọi API, trả JSON đã parse)
-- [ ] Viết Research Agent: nhận tên coin → gọi tool CoinGecko + DeFiLlama → dùng LLM tổng hợp báo cáo
-- [ ] CLI đơn giản (`python -m agents.cli <coin>`) in ra báo cáo tóm tắt
+- [x] Viết Research Agent: nhận tên coin → gọi tool CoinGecko + DeFiLlama → dùng LLM tổng hợp báo cáo
 - **Kết quả**: hỏi 1 coin → nhận báo cáo (giá, TVL, mô tả dự án)
 
 ### Giai đoạn 2 — Thêm data & phân tích
-- [ ] Viết Market Agent: phân tích xu hướng giá/volume (so sánh khung thời gian, % thay đổi)
-- [ ] Viết On-chain Agent: dùng Etherscan/BscScan, số holder, giao dịch lớn gần đây
-- [ ] Dựng Orchestrator bằng LangGraph, ghép Research + Market + On-chain Agent
-- [ ] Định nghĩa state schema chung (coin, dữ liệu từng agent, báo cáo cuối)
+- [x] Viết Market Agent: phân tích xu hướng giá/volume (so sánh khung thời gian, % thay đổi)
+- [x] Viết Price Action Agent: phân tích OHLC (nến), support/resistance, xu hướng kỹ thuật
+- [x] Dựng Orchestrator bằng LangGraph, ghép Research + Market + Price Action Agent
+- [x] Định nghĩa state schema chung (coin, dữ liệu từng agent, báo cáo cuối)
 - **Kết quả**: 1 lệnh gọi → orchestrator chạy song song 3 agent → gộp báo cáo
 
 ### Giai đoạn 3 — Sentiment + Signal
