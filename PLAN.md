@@ -10,7 +10,7 @@ Xây dựng hệ thống multi-agent hỗ trợ:
 ## 2. Tech stack
 - **Ngôn ngữ**: Python 3.11+
 - **Agent orchestration**: LangGraph
-- **LLM**: OpenAI cho reasoning + tool calling
+- **LLM**: bất kỳ LLM hỗ trợ tool calling (OpenAI-compatible API) cho reasoning + tool calling
 - **API layer**: FastAPI (thêm ở Giai đoạn 4)
 - **Package/env**: `uv` hoặc `venv` + `requirements.txt`
 
@@ -49,10 +49,10 @@ crypto-researcher/
 ## 6. Lộ trình MVP theo giai đoạn
 
 ### Giai đoạn 1 — Nền tảng (1 agent chạy được)
-- [ ] Setup repo: venv, `requirements.txt`, cấu trúc thư mục ở mục 5
-- [ ] Cấu hình Anthropic API key (.env, không commit)
-- [ ] Viết `tools/coingecko.py`, `tools/defillama.py` (hàm gọi API, trả JSON đã parse)
-- [ ] Viết Research Agent: nhận tên coin → gọi tool CoinGecko + DeFiLlama → dùng Claude tổng hợp báo cáo
+- [x] Setup repo: venv, `requirements.txt`, cấu trúc thư mục ở mục 5
+- [x] Cấu hình LLM API key (.env, không commit)
+- [x] Viết `tools/coingecko.py`, `tools/defillama.py` (hàm gọi API, trả JSON đã parse)
+- [ ] Viết Research Agent: nhận tên coin → gọi tool CoinGecko + DeFiLlama → dùng LLM tổng hợp báo cáo
 - [ ] CLI đơn giản (`python -m agents.cli <coin>`) in ra báo cáo tóm tắt
 - **Kết quả**: hỏi 1 coin → nhận báo cáo (giá, TVL, mô tả dự án)
 
