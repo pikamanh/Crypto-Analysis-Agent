@@ -1,4 +1,5 @@
-from tools.crypto_tools import get_coin_info
+from tools.coingecko_tools import get_coin_info
+from tools.defillama_tools import get_protocol_data
 
 TOOL_SCHEMAS = [
     {
@@ -21,8 +22,26 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+            "type": "function",
+            "function": {
+                "name": "get_protocol_data",
+                "description": """
+                    Get information of protocol when receive name token
+    
+                    Use `name` when the user give a ticker (e.g "btc", "eth")
+                    """,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Symbol token."},
+                    },
+                },
+            },
+        },
 ]
 
 TOOL_FUNCTIONS = {
     "get_coin_info": get_coin_info,
+    "get_protocol_data": get_protocol_data
 }

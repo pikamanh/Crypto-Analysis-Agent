@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GoogleSheets:
     def __init__(self, sheet_id: str = None, credentials_path: str = None):
-        self.sheet_id = sheet_id or "1wTTuxXt8n9q7C4NDXqQpI3wpKu1_5bGVmP9Xz0XGSyU"
+        self.sheet_id = sheet_id or "1LrO0Cqo1WW6obGZxWbJd891yuUmDYeyRdiUDU2zGMBI"
         self.scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
         self.credentials_path = credentials_path or "credentials.json"
         self.creds = None
@@ -53,7 +53,7 @@ class GoogleSheets:
         sheets = spreadsheet.worksheets()
         for sheet in sheets:
             if "coin" in sheet.title.lower():
-                df = pd.DataFrame(sheet.get_all_records(head=2))
+                df = pd.DataFrame(sheet.get_all_records())
                 df.rename(columns={
                     "Coin Id (API id)": "ID"
                 }, inplace=True)

@@ -1,4 +1,4 @@
-from agents.crypto_agent import ask_agent, SYSTEM_PROMPT
+from agents.research_agent import ask_agent, SYSTEM_PROMPT
 
 def main():
     messages = [

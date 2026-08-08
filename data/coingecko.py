@@ -129,7 +129,6 @@ class CoingeckoData:
             return None
 
         response = self.client.coins.get_id(id.values[0])
-        print(response)
         market = response.market_data
         links = response.links
         community = response.community_data
