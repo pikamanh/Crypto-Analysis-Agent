@@ -2,3 +2,11 @@
 credentials.json
 tests
 token.pickle
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+storage/trading_state.db
+alert/alerts.jsonl
+scheduler/KILL_SWITCH
