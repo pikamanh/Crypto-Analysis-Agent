@@ -1,0 +1,7 @@
+.venv
+.git
+**/__pycache__
+*.pyc
+storage/trading_state.db
+alert/alerts.jsonl
+scheduler/KILL_SWITCH

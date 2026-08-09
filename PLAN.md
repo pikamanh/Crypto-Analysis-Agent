@@ -70,6 +70,7 @@ crypto-researcher/
 ├── execution/          # execution_engine.py — đặt/đóng lệnh qua exchange API (testnet/live)
 ├── storage/            # state.py — SQLite: vị thế, lịch sử lệnh, PnL
 ├── scheduler/           # loop.py — vòng lặp theo timeframe, gọi analysis pipeline
+├── backtest/            # engine.py — replay rule-based proxy trên dữ liệu lịch sử Binance
 ├── api/                # FastAPI app — monitor/control bot
 ├── tests/
 ├── requirements.txt
@@ -101,20 +102,30 @@ crypto-researcher/
 - **Kết quả**: mỗi lần chạy pipeline → ra 1 tín hiệu có cấu trúc, máy đọc được, kèm lý do — đã test end-to-end với LLM thật (xem ghi chú test bên dưới)
 
 ### Giai đoạn 4 — Risk Manager + Execution (testnet) + Scheduler
-- [ ] `risk/risk_manager.py`: rule max size theo % vốn, max số lệnh mở đồng thời, max daily loss → approve/reject/điều chỉnh tín hiệu từ Giai đoạn 3
-- [ ] `storage/state.py` (SQLite): lưu vị thế mở, lịch sử lệnh, PnL
-- [ ] `execution/execution_engine.py`: đặt/đóng/điều chỉnh lệnh qua Binance Futures **testnet** (cờ config để bật live sau, mặc định tắt)
-- [ ] `scheduler/loop.py`: chạy pipeline mỗi 5 phút (giới hạn Binance rate limit, không nhanh hơn) → risk check → execution → cập nhật state
-- [ ] Alert Telegram/log cho mọi tín hiệu + quyết định risk + hành động lệnh
-- [ ] Kill switch: dừng bot ngay lập tức (đóng vòng lặp, không đặt lệnh mới) qua lệnh thủ công
+- [x] `risk/risk_manager.py`: rule max size theo % vốn, max số lệnh mở đồng thời, max daily loss, min confidence → approve/reject tín hiệu từ Giai đoạn 3 (chỉ giới hạn size/chặn lệnh, không tự nới direction/levels)
+- [x] `storage/state.py` (SQLite): lưu vị thế mở, lịch sử lệnh, PnL — `positions`/`orders` table, `get_daily_realized_pnl()` cho risk gate
+- [x] `execution/execution_engine.py`: đặt lệnh entry (MARKET) + SL/TP (algo order STOP_MARKET/TAKE_PROFIT_MARKET, `closePosition=true`) qua Binance USDS-M Futures **testnet** (`binance-sdk-derivatives-trading-usds-futures`), cờ `BINANCE_LIVE_TRADING` (mặc định `false`) chọn testnet/live URL + API key riêng biệt cho mỗi bên
+- [x] `scheduler/loop.py`: vòng lặp signal → risk → execution → cập nhật state cho danh sách symbol, `reconcile_positions()` đồng bộ lại state khi SL/TP đã khớp trực tiếp trên sàn, CLI `--symbols/--interval/--once`
+- [x] Alert (`alert/notifier.py`): log JSON có cấu trúc (mọi tín hiệu, quyết định risk, hành động lệnh, kill switch) + gửi Telegram nếu cấu hình `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
+- [x] Kill switch: `python -m scheduler.loop --kill "<reason>"` / `--release` — file flag, vòng lặp kiểm tra mỗi chu kỳ, không đặt lệnh mới khi bật
 - **Kết quả**: bot chạy tự động trên testnet theo vòng lặp thật, có risk gate, log đầy đủ, dừng được ngay khi cần
 
 ### Giai đoạn 5 — Backtest, Paper Trading & Go-live (thận trọng)
-- [ ] Backtest engine đơn giản: chạy lại Signal Agent trên dữ liệu lịch sử (Binance + Deribit nếu có) → thống kê win rate, R:R, drawdown
-- [ ] Paper trading: chạy Giai đoạn 4 trên testnet đủ lâu (vd vài tuần) trước khi cân nhắc live
-- [ ] FastAPI app (`/status`, `/positions`, `/start`, `/stop`) để giám sát/điều khiển
-- [ ] Go-live checklist (xác nhận thủ công, không tự động bật): API key quyền trade giới hạn, max loss cứng, kill switch đã test
+- [x] Backtest engine đơn giản: `backtest/engine.py` — walk-forward trên candles lịch sử Binance (`data.binance.get_historical_candles`, phân trang qua giới hạn 1000/call), rule-based proxy cho trend/momentum + entry/stop/target từ support/resistance (Deribit chỉ có option chain hiện tại, không có lịch sử GEX/DEX nên không replay được phần option flow của Signal Agent — đã ghi rõ trong docstring); output win rate, avg R-multiple, profit factor, max drawdown (R); CLI `python -m backtest.engine --symbol BTC --days 90 [--out report.json]` — đã test chạy thật với dữ liệu Binance
+- [ ] Paper trading: chạy Giai đoạn 4 trên testnet đủ lâu (vd vài tuần) trước khi cân nhắc live — **hoạt động vận hành, cần chạy `scheduler/loop.py` liên tục trong thời gian thực, chưa thực hiện**
+- [x] FastAPI app (`/status`, `/positions`, `/start`, `/stop`) để giám sát/điều khiển — `api/app.py`, chạy `uvicorn api.app:app`; `/start`,`/stop` chỉ toggle kill switch file mà `scheduler/loop.py` đã đọc mỗi cycle, không tự đặt/đóng lệnh; bảo vệ bằng HTTP Basic Auth (`API_USERNAME`/`API_PASSWORD`); đã test cả 4 endpoint chạy thật
+- [x] Dashboard web đơn giản (`api/static/index.html`, phục vụ tại `/`) — equity/PNL, danh sách vị thế mở, breaker switch bật/tắt kill switch có xác nhận; đã test qua trình duyệt (login, halt, resume)
+- [x] Docker hoá: `Dockerfile` + `docker-compose.yml` (service `scheduler` + `api`, `restart: unless-stopped`, dashboard chỉ bind `127.0.0.1:8000` — không lộ ra internet); đã build & chạy thử thành công local
+- [x] `DEPLOY.md`: đề xuất VPS (DigitalOcean Singapore, 2GB) + hướng dẫn deploy qua SSH, truy cập dashboard qua SSH tunnel — **chưa triển khai lên VPS thật, đang chờ bạn tạo server**
+- [x] Go-live checklist (xác nhận thủ công, không tự động bật): `GO_LIVE_CHECKLIST.md` — API key quyền trade giới hạn, risk limits, kill switch đã test, quy trình vận hành/rollback
 - **Kết quả**: hệ thống có bằng chứng backtest/paper trading trước khi chạy tiền thật, luôn có thể tắt ngay
+
+> ⚠️ Phát hiện ngoài kế hoạch: `.env` chứa API key thật đã bị commit + push lên
+> repo GitHub public (`pikamanh/Crypto-Researcher`). Đã gỡ `.env` khỏi git tracking
+> và thêm vào `.gitignore` (commit `37d823a`, chưa push). **Các key sau cần được
+> revoke/tạo lại: `BINANCE_API_KEY`/`BINANCE_SECRET_KEY` (spot), `COINGECKO_API_KEY`,
+> `CRYPTORANK_API_KEY`, `EHTERSCAN_API_KEY`** — key vẫn còn trong lịch sử git cho tới
+> khi purge history + force-push (cần xác nhận riêng vì đây là thao tác phá hoại).
 
 ## 7. Nguyên tắc khi code
 - Mỗi agent/module (analysis, risk, execution, storage) độc lập, test riêng được (mock exchange call)

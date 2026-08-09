@@ -8,4 +8,8 @@ google-auth-oauthlib
 pandas
 defillama-sdk
 binance-sdk-spot
+binance-sdk-derivatives-trading-usds-futures
 langgraph
+pydantic
+fastapi
+uvicorn

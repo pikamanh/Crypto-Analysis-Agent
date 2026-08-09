@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Bot Control</title>
+<style>
+  :root {
+    --bg: #0b0e11;
+    --surface: #12161c;
+    --surface-2: #171c24;
+    --border: #232a35;
+    --text: #e6e8eb;
+    --text-muted: #808b9a;
+    --long: #1fa37b;
+    --short: #d6483f;
+    --warn: #e0a526;
+    --font-sans: -apple-system, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--long); color: #04140f; }
+
+  .veil {
+    position: fixed; inset: 0; z-index: 50;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity .25s ease;
+  }
+  .veil.hidden { opacity: 0; pointer-events: none; }
+  .login-card {
+    width: min(320px, 90vw);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 28px;
+  }
+  .login-card h1 {
+    font-size: 15px; font-weight: 600; letter-spacing: .02em;
+    margin: 0 0 4px;
+  }
+  .login-card p { color: var(--text-muted); font-size: 13px; margin: 0 0 20px; }
+  .login-card input {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--font-mono); font-size: 13px;
+    padding: 10px 12px; border-radius: 6px; margin-bottom: 10px; outline: none;
+  }
+  .login-card input:focus { border-color: var(--long); }
+  .login-card button {
+    width: 100%; background: var(--long); color: #04140f; border: none;
+    font-weight: 600; font-size: 13px; padding: 10px 12px; border-radius: 6px;
+    cursor: pointer; margin-top: 6px;
+  }
+  .login-error { color: var(--short); font-size: 12px; margin-top: 10px; min-height: 14px; }
+
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 20px 20px 60px;
+  }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 2px 22px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 22px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--long);
+    box-shadow: 0 0 0 3px rgba(31,163,123,.15);
+    transition: background .2s, box-shadow .2s;
+  }
+  .dot.off { background: var(--text-muted); box-shadow: 0 0 0 3px rgba(128,139,154,.12); }
+  .brand h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  .badge {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em;
+    padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .badge.testnet { color: var(--warn); border-color: rgba(224,165,38,.3); background: rgba(224,165,38,.08); }
+  .badge.live { color: var(--short); border-color: rgba(214,72,63,.35); background: rgba(214,72,63,.08); }
+  .meta { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .card + .card { margin-top: 16px; }
+  .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--text-muted); margin: 0 0 10px;
+  }
+
+  .stat-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .stat .num { font-family: var(--font-mono); font-size: 26px; font-weight: 600; line-height: 1.1; }
+  .stat .num.up { color: var(--long); }
+  .stat .num.down { color: var(--short); }
+  .stat .sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .meter { height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 14px; overflow: hidden; }
+  .meter-fill { height: 100%; background: var(--warn); transition: width .3s ease; }
+
+  table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12.5px; }
+  th { text-align: left; color: var(--text-muted); font-weight: 500; font-size: 11px; padding: 0 8px 8px 0; }
+  td { padding: 9px 8px 9px 0; border-top: 1px solid var(--border); }
+  .side-long { color: var(--long); }
+  .side-short { color: var(--short); }
+  .empty-row { color: var(--text-muted); font-family: var(--font-sans); font-size: 13px; padding: 10px 0; }
+
+  /* breaker switch */
+  .switch-panel { text-align: center; }
+  .switch-state { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; margin-bottom: 16px; }
+  .switch-state.running { color: var(--long); }
+  .switch-state.halted { color: var(--short); }
+  .breaker {
+    width: 108px; height: 150px; margin: 0 auto;
+    background: linear-gradient(180deg, #1b2129, #14181f);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    position: relative;
+    padding: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .breaker-track {
+    position: relative;
+    width: 100%; height: 100%;
+    border-radius: 6px;
+    background: #0a0d11;
+    box-shadow: inset 0 0 0 1px var(--border);
+    overflow: hidden;
+  }
+  .breaker-lever {
+    position: absolute; left: 50%; width: 74px; height: 60px;
+    transform: translateX(-50%);
+    background: linear-gradient(180deg, #2a323e, #1c222b);
+    border: 1px solid #333c4a;
+    border-radius: 6px;
+    box-shadow: 0 2px 0 rgba(0,0,0,.4), 0 0 14px rgba(0,0,0,.3);
+    transition: top .28s cubic-bezier(.4,1.6,.4,1), background .2s;
+    top: 8px;
+  }
+  .breaker.halted .breaker-lever { top: calc(100% - 68px); }
+  .breaker.running .breaker-lever { background: linear-gradient(180deg, #23604d, #17493a); border-color: #2b7d61; }
+  .breaker.halted .breaker-lever { background: linear-gradient(180deg, #6b2b26, #4d1e1a); border-color: #8a352d; }
+  .breaker-glow {
+    position: absolute; inset: 0; opacity: 0; transition: opacity .3s;
+    background: radial-gradient(ellipse at 50% 20%, rgba(31,163,123,.25), transparent 70%);
+  }
+  .breaker.running .breaker-glow { opacity: 1; }
+  .breaker.halted .breaker-glow { background: radial-gradient(ellipse at 50% 80%, rgba(214,72,63,.25), transparent 70%); opacity: 1; }
+  .breaker-label {
+    position: absolute; left: 0; right: 0; text-align: center;
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: .1em; color: var(--text-muted);
+  }
+  .breaker-label.top { top: 6px; }
+  .breaker-label.bottom { bottom: 6px; }
+  .switch-hint { font-size: 11px; color: var(--text-muted); margin-top: 14px; }
+  .switch-hint b { color: var(--text); }
+
+  /* confirm modal */
+  .modal-veil {
+    position: fixed; inset: 0; background: rgba(5,6,8,.7);
+    display: flex; align-items: center; justify-content: center; z-index: 60;
+    opacity: 0; pointer-events: none; transition: opacity .15s;
+  }
+  .modal-veil.open { opacity: 1; pointer-events: auto; }
+  .modal {
+    width: min(300px, 88vw);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px;
+  }
+  .modal h2 { font-size: 14px; margin: 0 0 8px; }
+  .modal p { font-size: 13px; color: var(--text-muted); margin: 0 0 18px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 8px; }
+  .modal-actions button {
+    flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .modal-actions button.confirm.to-halt { background: var(--short); border-color: var(--short); color: #1a0605; font-weight: 600; }
+  .modal-actions button.confirm.to-run { background: var(--long); border-color: var(--long); color: #04140f; font-weight: 600; }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(10px);
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-size: 12.5px; padding: 10px 16px; border-radius: 8px;
+    opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none;
+    font-family: var(--font-mono);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+  <div class="veil" id="veil">
+    <form class="login-card" id="login-form">
+      <h1>Bot Control</h1>
+      <p>Sign in to view status and trading controls.</p>
+      <input type="text" id="login-user" placeholder="username" autocomplete="username" />
+      <input type="password" id="login-pass" placeholder="password" autocomplete="current-password" />
+      <button type="submit">Sign in</button>
+      <div class="login-error" id="login-error"></div>
+    </form>
+  </div>
+
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <span class="dot off" id="conn-dot"></span>
+        <h1>CRYPTO FUTURES BOT</h1>
+        <span class="badge" id="mode-badge">—</span>
+      </div>
+      <span class="meta" id="refresh-meta">connecting…</span>
+    </header>
+
+    <div class="grid">
+      <div>
+        <div class="card">
+          <p class="label">Equity &amp; Daily PNL</p>
+          <div class="stat-row">
+            <div class="stat">
+              <div class="num" id="equity-num">—</div>
+              <div class="sub">account equity (USDT)</div>
+            </div>
+            <div class="stat">
+              <div class="num" id="pnl-num">—</div>
+              <div class="sub">realized PNL, today (UTC)</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="label">Open Positions</p>
+          <div id="positions-wrap">
+            <div class="empty-row">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card switch-panel">
+          <p class="label" style="text-align:left">Trading Switch</p>
+          <div class="switch-state" id="switch-state">—</div>
+          <div class="breaker" id="breaker">
+            <span class="breaker-label top">RUN</span>
+            <div class="breaker-track">
+              <div class="breaker-glow"></div>
+              <div class="breaker-lever"></div>
+            </div>
+            <span class="breaker-label bottom">HALT</span>
+          </div>
+          <div class="switch-hint">
+            Halting engages the kill switch — <b>open positions stay open</b>,
+            only new orders are blocked.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-veil" id="modal-veil">
+    <div class="modal">
+      <h2 id="modal-title">Confirm</h2>
+      <p id="modal-body"></p>
+      <div class="modal-actions">
+        <button id="modal-cancel">Cancel</button>
+        <button id="modal-confirm" class="confirm"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var authHeader = sessionStorage.getItem("botAuth") || null;
+  var pollTimer = null;
+  var lastKillSwitchActive = null;
+
+  var el = {
+    veil: document.getElementById("veil"),
+    loginForm: document.getElementById("login-form"),
+    loginUser: document.getElementById("login-user"),
+    loginPass: document.getElementById("login-pass"),
+    loginError: document.getElementById("login-error"),
+    connDot: document.getElementById("conn-dot"),
+    modeBadge: document.getElementById("mode-badge"),
+    refreshMeta: document.getElementById("refresh-meta"),
+    equityNum: document.getElementById("equity-num"),
+    pnlNum: document.getElementById("pnl-num"),
+    positionsWrap: document.getElementById("positions-wrap"),
+    switchState: document.getElementById("switch-state"),
+    breaker: document.getElementById("breaker"),
+    modalVeil: document.getElementById("modal-veil"),
+    modalTitle: document.getElementById("modal-title"),
+    modalBody: document.getElementById("modal-body"),
+    modalCancel: document.getElementById("modal-cancel"),
+    modalConfirm: document.getElementById("modal-confirm"),
+    toast: document.getElementById("toast"),
+  };
+
+  function showToast(msg) {
+    el.toast.textContent = msg;
+    el.toast.classList.add("show");
+    setTimeout(function () { el.toast.classList.remove("show"); }, 2600);
+  }
+
+  function fmtUsd(n) {
+    if (n === null || n === undefined) return "—";
+    return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ Authorization: authHeader }, opts.headers || {});
+    var res = await fetch(path, opts);
+    if (res.status === 401) {
+      sessionStorage.removeItem("botAuth");
+      authHeader = null;
+      stopPolling();
+      el.veil.classList.remove("hidden");
+      throw new Error("unauthorized");
+    }
+    if (!res.ok) throw new Error("request failed: " + res.status);
+    return res.json();
+  }
+
+  function renderStatus(s) {
+    el.connDot.classList.remove("off");
+    el.modeBadge.textContent = s.live_trading ? "LIVE" : "TESTNET";
+    el.modeBadge.className = "badge " + (s.live_trading ? "live" : "testnet");
+
+    el.equityNum.textContent = s.equity_error ? "n/a" : fmtUsd(s.account_equity);
+    el.pnlNum.textContent = fmtUsd(s.daily_realized_pnl);
+    el.pnlNum.className = "num " + (s.daily_realized_pnl > 0 ? "up" : s.daily_realized_pnl < 0 ? "down" : "");
+
+    var halted = s.kill_switch_active;
+    el.breaker.className = "breaker " + (halted ? "halted" : "running");
+    el.switchState.textContent = halted ? "HALTED — new orders blocked" : "RUNNING";
+    el.switchState.className = "switch-state " + (halted ? "halted" : "running");
+
+    if (lastKillSwitchActive !== null && lastKillSwitchActive !== halted) {
+      showToast(halted ? "Kill switch engaged." : "Kill switch released.");
+    }
+    lastKillSwitchActive = halted;
+
+    el.refreshMeta.textContent = "updated " + new Date().toLocaleTimeString();
+  }
+
+  function renderPositions(positions) {
+    if (!positions.length) {
+      el.positionsWrap.innerHTML = '<div class="empty-row">No open positions.</div>';
+      return;
+    }
+    var rows = positions.map(function (p) {
+      var sideClass = p.side === "long" ? "side-long" : "side-short";
+      return "<tr><td>" + p.symbol + "</td>" +
+        '<td class="' + sideClass + '">' + p.side + "</td>" +
+        "<td>" + p.quantity + "</td>" +
+        "<td>" + p.entry_price + "</td>" +
+        "<td>" + (p.stop_loss ?? "—") + "</td>" +
+        "<td>" + (p.take_profit ?? "—") + "</td></tr>";
+    }).join("");
+    el.positionsWrap.innerHTML =
+      "<table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>SL</th><th>TP</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table>";
+  }
+
+  async function refresh() {
+    try {
+      var [status, positions] = await Promise.all([api("/status"), api("/positions")]);
+      renderStatus(status);
+      renderPositions(positions);
+    } catch (e) {
+      if (e.message !== "unauthorized") {
+        el.connDot.classList.add("off");
+        el.refreshMeta.textContent = "connection lost — retrying…";
+      }
+    }
+  }
+
+  function startPolling() {
+    refresh();
+    pollTimer = setInterval(refresh, 10000);
+  }
+  function stopPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+  }
+
+  el.loginForm.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var user = el.loginUser.value.trim();
+    var pass = el.loginPass.value;
+    var candidate = "Basic " + btoa(user + ":" + pass);
+    try {
+      var res = await fetch("/status", { headers: { Authorization: candidate } });
+      if (res.status === 401) {
+        el.loginError.textContent = "Incorrect username or password.";
+        return;
+      }
+      if (!res.ok) {
+        el.loginError.textContent = "Server error — try again.";
+        return;
+      }
+      authHeader = candidate;
+      sessionStorage.setItem("botAuth", candidate);
+      el.loginError.textContent = "";
+      el.veil.classList.add("hidden");
+      startPolling();
+    } catch (err) {
+      el.loginError.textContent = "Could not reach the server.";
+    }
+  });
+
+  var pendingAction = null;
+  function openModal(toHalt) {
+    pendingAction = toHalt ? "stop" : "start";
+    el.modalTitle.textContent = toHalt ? "Engage kill switch?" : "Release kill switch?";
+    el.modalBody.textContent = toHalt
+      ? "The scheduler will stop opening new positions starting next cycle. Positions already open stay open with their SL/TP orders on the exchange."
+      : "The scheduler will resume evaluating and opening new positions on its next cycle.";
+    el.modalConfirm.textContent = toHalt ? "Halt trading" : "Resume trading";
+    el.modalConfirm.className = "confirm " + (toHalt ? "to-halt" : "to-run");
+    el.modalVeil.classList.add("open");
+  }
+  function closeModal() {
+    el.modalVeil.classList.remove("open");
+    pendingAction = null;
+  }
+
+  el.breaker.addEventListener("click", function () {
+    openModal(!el.breaker.classList.contains("halted"));
+  });
+  el.modalCancel.addEventListener("click", closeModal);
+  el.modalVeil.addEventListener("click", function (e) {
+    if (e.target === el.modalVeil) closeModal();
+  });
+  el.modalConfirm.addEventListener("click", async function () {
+    var action = pendingAction;
+    closeModal();
+    try {
+      await api("/" + action, { method: "POST" });
+      refresh();
+    } catch (e) {
+      if (e.message !== "unauthorized") showToast("Action failed — check server logs.");
+    }
+  });
+
+  if (authHeader) {
+    el.veil.classList.add("hidden");
+    startPolling();
+  }
+})();
+</script>
+</body>
+</html>
