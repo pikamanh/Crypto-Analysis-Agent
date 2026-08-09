@@ -1,47 +1,76 @@
-# Agentic AI Crypto Researcher — Implementation Plan
+# Agentic AI Crypto Futures Trading Bot — Implementation Plan
 
 ## 1. Mục tiêu
-Xây dựng hệ thống multi-agent hỗ trợ:
-- Research & báo cáo dự án crypto (whitepaper, docs, tổng quan)
-- Phân tích thị trường & kỹ thuật (giá, volume, TVL, chỉ báo kỹ thuật, xu hướng)
-- Tổng hợp tín hiệu giao dịch (không tự động đặt lệnh, chỉ đề xuất)
-- Trợ lý hỏi-đáp (chatbot) tra cứu dữ liệu real-time
+Chuyển hướng từ "deep research token" sang xây dựng **bot giao dịch futures** tự động:
+- Theo dõi thị trường **liên tục** (không chỉ trả lời theo request) và tự ra tín hiệu
+- Tín hiệu giao dịch dựa **chính** vào price action (support/resistance) + option flow; sentiment/economic calendar (tin 3 sao: FOMC/CPI/NFP...) chỉ dùng để cảnh báo rủi ro biến động, không quyết định hướng lệnh
+- Output tín hiệu phải **có cấu trúc** (direction, entry zone, stop-loss, take-profit, size, confidence) để bot đọc và hành động được — không chỉ là báo cáo tường thuật cho người đọc
+- Có lớp **risk management** (giới hạn size, số lệnh mở, max daily loss) trước khi đặt lệnh
+- Chạy **testnet/paper trading trước**, chỉ cân nhắc live khi đã kiểm chứng qua backtest + paper trading
+- Research/Market Agent (whitepaper, TVL, market cap) không còn là trọng tâm — giữ lại như tool tra cứu theo yêu cầu (chatbot), không nằm trong vòng lặp ra quyết định của bot
+
+⚠️ Đây là hệ thống chạy tiền thật tiềm năng — mọi thay đổi liên quan tới đặt lệnh/API key có quyền trade phải được xác nhận rõ ràng trước khi bật, và luôn có kill switch tắt bot ngay lập tức.
 
 ## 2. Tech stack
 - **Ngôn ngữ**: Python 3.11+
-- **Agent orchestration**: LangGraph
-- **LLM**: bất kỳ LLM hỗ trợ tool calling (OpenAI-compatible API) cho reasoning + tool calling
-- **API layer**: FastAPI (thêm ở Giai đoạn 4)
+- **Agent orchestration**: LangGraph (giữ cho phần phân tích/signal)
+- **LLM**: bất kỳ LLM hỗ trợ tool calling (OpenAI-compatible API)
+- **Scheduler/loop**: APScheduler hoặc vòng lặp asyncio riêng, chạy mỗi **5 phút** — giới hạn bởi rate limit của Binance API (không poll sát theo từng nến), mỗi lần chạy đọc nến 15m gần nhất đã đóng tại thời điểm đó
+- **Execution**: `ccxt` hoặc Binance Futures connector chính thức — **testnet trước**, có cờ bật/tắt live rõ ràng trong config
+- **State/persistence**: SQLite (vị thế đang mở, lịch sử lệnh, PnL) — đủ nhẹ cho giai đoạn đầu
+- **Alert**: Telegram bot hoặc log file có cấu trúc (JSON) cho mọi tín hiệu + hành động
+- **API layer**: FastAPI — dùng để giám sát/điều khiển bot (start/stop, xem vị thế), không phải kênh chính sinh tín hiệu nữa
 - **Package/env**: `uv` hoặc `venv` + `requirements.txt`
 
 ## 3. Nguồn dữ liệu (free tier)
-| Loại dữ liệu | Nguồn | Ghi chú |
+| Loại dữ liệu | Nguồn | Vai trò |
 |---|---|---|
-| Giá / market cap / volume | CoinGecko API | free, không cần key cho basic endpoints |
-| TVL / project info | DeFiLlama API | free |
-| OHLC / candles (dài hạn) | CoinGecko API | free, daily candle cho xu hướng dài hạn |
-| OHLC / candles (ngắn hạn, 15m) | Binance API | free, không cần key cho market data public |
-| Tin tức / sentiment | CryptoPanic API hoặc RSS | free |
-| Social (X/Twitter) | để giai đoạn sau | API trả phí |
+| OHLC / candles (chính, ngắn hạn) | Binance Futures API | **chính** — price action, support/resistance. Rate limit → poll mỗi 5 phút, không real-time từng tick |
+| Option flow + GEX/DEX (OI, greeks theo strike, put/call ratio) | Deribit API | **chính** — vùng OI lớn = kháng cự/hỗ trợ; GEX/DEX = vùng dealer có khả năng ghìm/khuếch đại biến động giá |
+| Economic calendar (tin 3 sao: FOMC/CPI/NFP...) | ForexFactory calendar JSON | **phụ** — cảnh báo rủi ro biến động, điều chỉnh risk (không đổi hướng) |
+| Tin tức crypto / sentiment | CryptoPanic API hoặc RSS | **phụ**, tham khảo thêm |
+| Giá / market cap / TVL / whitepaper | CoinGecko, DeFiLlama | **ngoài vòng lặp bot** — chỉ phục vụ tra cứu qua chatbot khi có yêu cầu |
+| Social (X/Twitter) | để sau | API trả phí, chưa cần cho MVP bot |
 
 ## 4. Kiến trúc mục tiêu
 ```
-Orchestrator Agent (LangGraph)
- ├─ Research Agent   → whitepaper/docs, tóm tắt dự án
- ├─ Market Agent     → giá, volume, market cap (CoinGecko)
- ├─ Price Action Agent → OHLC, support/resistance, xu hướng kỹ thuật (Binance 15m + CoinGecko daily)
- ├─ Sentiment Agent  → tin tức, social (CryptoPanic)
- └─ Signal Agent     → tổng hợp toàn bộ → đề xuất tín hiệu
-Chatbot/API layer    → nhận câu hỏi người dùng, route tới orchestrator
+Scheduler (vòng lặp mỗi 5 phút — giới hạn bởi rate limit Binance API)
+ └─ Analysis Pipeline (LangGraph)
+     ├─ Price Action Agent  → OHLC (nến 15m gần nhất), support/resistance, xu hướng (Binance Futures)
+     ├─ Option Flow Agent   → OI theo strike, put/call ratio, max pain, GEX/DEX (Deribit)
+     ├─ Sentiment Agent     → tin 3 sao sắp/đang diễn ra (ForexFactory) + CryptoPanic phụ
+     └─ Signal Agent        → hợp nhất Price Action + Option Flow (chính), Sentiment (điều chỉnh risk)
+                              → output có cấu trúc: {direction, entry_zone, stop_loss, take_profit,
+                                                      confidence, size_pct, reason}
+ └─ Risk Manager
+     - Kiểm tra vị thế đang mở, exposure hiện tại, max daily loss, max concurrent positions
+     - Approve / reject / điều chỉnh size của tín hiệu từ Signal Agent
+ └─ Execution Engine
+     - Đặt/đóng/điều chỉnh lệnh qua exchange API (testnet trước, cờ bật live riêng)
+ └─ Position/State Tracker (SQLite)
+     - Vị thế mở, lịch sử lệnh, PnL
+ └─ Monitoring/Alert
+     - Telegram/log mọi tín hiệu, quyết định risk, và hành động lệnh
+
+Research/Market Agent (CoinGecko/DeFiLlama) → tra cứu theo yêu cầu, KHÔNG nằm trong vòng lặp trên
+Chatbot/API layer → hỏi-đáp tra cứu + điều khiển bot (start/stop, xem vị thế/PnL)
 ```
 
 ## 5. Cấu trúc thư mục đề xuất
 ```
 crypto-researcher/
-├── agents/            # logic từng agent (research, market, price_action, sentiment, signal)
-├── tools/             # wrapper mỏng cho LLM tool-calling + registry.py (coingecko_tools.py, defillama_tools.py, binance_tools.py)
-├── data/              # client gọi API bên ngoài + models (coingecko.py, defillama.py, binance.py, sheets.py, indicators.py)
-├── api/               # FastAPI app (Giai đoạn 4)
+├── agents/            # research, market, price_action, option_flow, sentiment, signal
+├── tools/             # wrapper cho LLM tool-calling + registry.py
+│                       #  (coingecko_tools.py, defillama_tools.py, binance_tools.py,
+│                       #   deribit_tools.py, calendar_tools.py)
+├── data/              # client gọi API + models
+│                       #  (coingecko.py, defillama.py, binance.py, deribit.py,
+│                       #   economic_calendar.py, indicators.py, sheets.py)
+├── risk/              # risk_manager.py — rule kiểm tra size/exposure/daily loss
+├── execution/          # execution_engine.py — đặt/đóng lệnh qua exchange API (testnet/live)
+├── storage/            # state.py — SQLite: vị thế, lịch sử lệnh, PnL
+├── scheduler/           # loop.py — vòng lặp theo timeframe, gọi analysis pipeline
+├── api/                # FastAPI app — monitor/control bot
 ├── tests/
 ├── requirements.txt
 └── README.md
@@ -49,35 +78,47 @@ crypto-researcher/
 
 ## 6. Lộ trình MVP theo giai đoạn
 
-### Giai đoạn 1 — Nền tảng (1 agent chạy được)
-- [x] Setup repo: venv, `requirements.txt`, cấu trúc thư mục ở mục 5
-- [x] Cấu hình LLM API key (.env, không commit)
-- [x] Viết `tools/coingecko.py`, `tools/defillama.py` (hàm gọi API, trả JSON đã parse)
-- [x] Viết Research Agent: nhận tên coin → gọi tool CoinGecko + DeFiLlama → dùng LLM tổng hợp báo cáo
-- **Kết quả**: hỏi 1 coin → nhận báo cáo (giá, TVL, mô tả dự án)
+### Giai đoạn 1 — Nền tảng (đã xong, giữ nguyên)
+- [x] Setup repo, cấu trúc thư mục, `.env` cho LLM key
+- [x] `data/coingecko.py`, `data/defillama.py` + Research Agent
+- **Kết quả**: hỏi 1 coin → nhận báo cáo (giá, TVL, mô tả dự án) — nay dùng như tool tra cứu phụ, không còn là lõi hệ thống
 
-### Giai đoạn 2 — Thêm data & phân tích
-- [x] Viết Market Agent: phân tích xu hướng giá/volume (so sánh khung thời gian, % thay đổi)
-- [x] Viết Price Action Agent: phân tích OHLC (nến), support/resistance, xu hướng kỹ thuật
-- [x] Dựng Orchestrator bằng LangGraph, ghép Research + Market + Price Action Agent
-- [x] Định nghĩa state schema chung (coin, dữ liệu từng agent, báo cáo cuối)
-- **Kết quả**: 1 lệnh gọi → orchestrator chạy song song 3 agent → gộp báo cáo
+### Giai đoạn 2 — Market & Price Action (đã xong, giữ nguyên)
+- [x] Market Agent (xu hướng giá/volume)
+- [x] Price Action Agent (OHLC, support/resistance, xu hướng kỹ thuật)
+- [x] Orchestrator LangGraph ghép Research + Market + Price Action
+- **Kết quả**: 1 lệnh gọi → chạy song song 3 agent → gộp báo cáo (nền tảng phân tích tái sử dụng ở Giai đoạn 3)
 
-### Giai đoạn 3 — Sentiment + Signal
-- [ ] Viết `tools/cryptopanic.py`, Sentiment Agent (tóm tắt tin tức, đánh giá tích cực/tiêu cực)
-- [ ] Viết Signal Agent: nhận output của 4 agent trên → đề xuất tín hiệu (bullish/bearish/neutral) kèm lý do
-- [ ] Thêm disclaimer bắt buộc: đây là tổng hợp thông tin, không phải lời khuyên đầu tư
-- **Kết quả**: báo cáo đầy đủ 4 chiều (research/market/onchain/sentiment) + tín hiệu tổng hợp
+### Giai đoạn 3 — Option Flow + Sentiment (calendar) + Signal có cấu trúc
+- [x] `data/deribit.py`: option chain BTC/ETH (OI, greeks theo strike từ Deribit `public/ticker`, giới hạn theo `max_days_to_expiry` + `strike_range_pct`), put/call OI ratio, max pain — gọi ticker song song (`ThreadPoolExecutor`) + retry/backoff cho 429 để chạy đủ nhanh trong chu kỳ 5 phút
+- [x] Tính **GEX** (Σ OI × gamma × spot² × 0.01, quy ước dealer long call / short put) và **DEX** (Σ OI × delta × spot, delta lấy dấu sẵn từ Deribit) theo strike, tổng hợp `total_gex`/`total_dex` + `zero_gamma_level` (nội suy điểm cumulative GEX đổi dấu)
+- [x] Thêm `gex_regime` ("dampening"/"amplifying"/"neutral") và `spot_vs_zero_gamma` ("above"/"below") tính sẵn bằng code trong `data/deribit.py` — tránh việc model nhỏ (3B) tự suy dấu `total_gex` rồi đọc ngược (đã xảy ra khi test); Option Flow Agent + Signal Agent giờ dùng trực tiếp 2 field này thay vì tự diễn giải từ số
+- [x] `tools/deribit_tools.py`: bọc `data/deribit.py` thành tool cho LLM tool-calling, đăng ký vào `tools/registry.py` (`get_option_flow`)
+- [x] Option Flow Agent (`agents/option_flow_agent.py`): vùng OI lớn (kháng cự/hỗ trợ từ option), thiên hướng put/call, vùng GEX dương/âm (dealer ghìm giá vs khuếch đại biến động), zero-gamma level — output có cấu trúc `{trend, reasoning}` như các agent khác, sẵn sàng ghép vào orchestrator
+- [x] `data/economic_calendar.py` + `tools/calendar_tools.py`: lọc sự kiện impact="High" (3 sao) từ ForexFactory JSON (`ff_calendar_thisweek.json`), retry/backoff cho 429, đăng ký `get_high_impact_calendar` vào `tools/registry.py`
+- [x] Sentiment Agent (`agents/sentiment_agent.py`): `risk_level` (high/elevated/normal) dựa vào cửa sổ theo dõi tin 3 sao — chỉ cảnh báo rủi ro/khung giờ, không suy ra hướng giá
+- [x] Signal Agent (`agents/signal_agent.py`): output schema có cấu trúc — `{direction, entry_zone, stop_loss, take_profit, confidence, size_pct, reason}`, tổng hợp Price Action + Option Flow (chính), Sentiment chỉ chỉnh `size_pct`/cảnh báo, không đổi `direction`
+- **Kết quả**: mỗi lần chạy pipeline → ra 1 tín hiệu có cấu trúc, máy đọc được, kèm lý do — đã test end-to-end với LLM thật (xem ghi chú test bên dưới)
 
-### Giai đoạn 4 — Chatbot/API + productionize
-- [ ] Bọc orchestrator bằng FastAPI (`POST /research/{coin}`, `POST /chat`)
-- [ ] Thêm cache cho API calls bên ngoài (tránh rate-limit, ví dụ TTL cache theo coin)
-- [ ] Thêm logging, xử lý lỗi khi API bên ngoài fail/timeout
-- [ ] (Tuỳ chọn) Giao diện Streamlit hoặc tích hợp Telegram bot
-- **Kết quả**: hệ thống chạy như service, có thể hỏi-đáp qua API/chatbot
+### Giai đoạn 4 — Risk Manager + Execution (testnet) + Scheduler
+- [ ] `risk/risk_manager.py`: rule max size theo % vốn, max số lệnh mở đồng thời, max daily loss → approve/reject/điều chỉnh tín hiệu từ Giai đoạn 3
+- [ ] `storage/state.py` (SQLite): lưu vị thế mở, lịch sử lệnh, PnL
+- [ ] `execution/execution_engine.py`: đặt/đóng/điều chỉnh lệnh qua Binance Futures **testnet** (cờ config để bật live sau, mặc định tắt)
+- [ ] `scheduler/loop.py`: chạy pipeline mỗi 5 phút (giới hạn Binance rate limit, không nhanh hơn) → risk check → execution → cập nhật state
+- [ ] Alert Telegram/log cho mọi tín hiệu + quyết định risk + hành động lệnh
+- [ ] Kill switch: dừng bot ngay lập tức (đóng vòng lặp, không đặt lệnh mới) qua lệnh thủ công
+- **Kết quả**: bot chạy tự động trên testnet theo vòng lặp thật, có risk gate, log đầy đủ, dừng được ngay khi cần
+
+### Giai đoạn 5 — Backtest, Paper Trading & Go-live (thận trọng)
+- [ ] Backtest engine đơn giản: chạy lại Signal Agent trên dữ liệu lịch sử (Binance + Deribit nếu có) → thống kê win rate, R:R, drawdown
+- [ ] Paper trading: chạy Giai đoạn 4 trên testnet đủ lâu (vd vài tuần) trước khi cân nhắc live
+- [ ] FastAPI app (`/status`, `/positions`, `/start`, `/stop`) để giám sát/điều khiển
+- [ ] Go-live checklist (xác nhận thủ công, không tự động bật): API key quyền trade giới hạn, max loss cứng, kill switch đã test
+- **Kết quả**: hệ thống có bằng chứng backtest/paper trading trước khi chạy tiền thật, luôn có thể tắt ngay
 
 ## 7. Nguyên tắc khi code
-- Mỗi agent là 1 module độc lập, dễ test riêng (mock tool calls)
-- Tool wrapper tách biệt hoàn toàn khỏi agent logic (agent không gọi HTTP trực tiếp)
-- Không hardcode API key, dùng `.env` + `python-dotenv`
+- Mỗi agent/module (analysis, risk, execution, storage) độc lập, test riêng được (mock exchange call)
+- Tool wrapper tách biệt hoàn toàn khỏi agent logic; execution engine tách biệt hoàn toàn khỏi signal logic (risk manager luôn đứng giữa)
+- Không hardcode API key, dùng `.env` + `python-dotenv`; API key live tách biệt hoàn toàn với testnet, không bao giờ commit
+- Mặc định mọi thứ chạy testnet/dry-run; bật live phải là hành động rõ ràng, có xác nhận, không phải default
 - Ưu tiên chạy được từng giai đoạn trước khi sang giai đoạn tiếp theo — không thiết kế trước cho tính năng chưa cần

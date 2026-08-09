@@ -1,6 +1,8 @@
 from tools.coingecko_tools import get_coin_info, get_price_action
 from tools.defillama_tools import get_protocol_data
 from tools.binance_tools import get_price_action_15m
+from tools.deribit_tools import get_option_flow
+from tools.calendar_tools import get_high_impact_calendar
 
 TOOL_SCHEMAS = [
     {
@@ -94,6 +96,57 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_option_flow",
+            "description": """
+                Get an options GEX/DEX (gamma/delta exposure) profile for a
+                crypto currency, sourced from Deribit's option chain.
+
+                `currency` is the underlying, e.g. "BTC" or "ETH" (Deribit
+                only lists options for a handful of majors).
+
+                Returns per-strike open interest, GEX, and DEX, plus
+                chain-wide totals, put/call OI ratio, max pain, and the
+                zero-gamma level. Returns nothing if no option data could be
+                fetched (e.g. unsupported currency).
+                """,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "currency": {"type": "string", "description": "Underlying currency, e.g. BTC or ETH"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_high_impact_calendar",
+            "description": """
+                Get high-impact ("3-star") macro economic events (FOMC, CPI,
+                NFP, PCE, ...) from the ForexFactory weekly calendar,
+                filtered to a window around now.
+
+                `hours_ahead`/`hours_behind` define the watch window
+                (default: last 2h to next 24h). Use this to check if the
+                market is currently near a high-impact macro event — these
+                tend to drive outsized crypto futures volatility.
+
+                Returns the events inside the window, whether the window
+                currently contains any high-impact event, and the next
+                upcoming one beyond the window.
+                """,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hours_ahead": {"type": "integer", "description": "Hours ahead of now to watch"},
+                    "hours_behind": {"type": "integer", "description": "Hours behind now to watch"},
+                },
+            },
+        },
+    },
 ]
 
 TOOL_FUNCTIONS = {
@@ -101,4 +154,6 @@ TOOL_FUNCTIONS = {
     "get_protocol_data": get_protocol_data,
     "get_price_action": get_price_action,
     "get_price_action_15m": get_price_action_15m,
+    "get_option_flow": get_option_flow,
+    "get_high_impact_calendar": get_high_impact_calendar,
 }
