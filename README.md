@@ -102,13 +102,6 @@ The project is at **Stage 5/5** per [PLAN.md](./PLAN.md):
   **long-running testnet paper trading has not been run yet** — `scheduler/loop.py`
   needs to run continuously for several weeks before considering go-live
 
-⚠️ **Outstanding issue**: `.env` containing real API keys was previously committed
-and pushed to the public GitHub repo. It has since been untracked from git, but the
-keys remain in git history — the following keys need to be revoked/rotated:
-`BINANCE_API_KEY`/`SECRET_KEY` (spot), `COINGECKO_API_KEY`, `CRYPTORANK_API_KEY`,
-`EHTERSCAN_API_KEY`, and git history needs to be purged once confirmed. See section 6
-of PLAN.md for details.
-
 Full plan details and per-item progress are in [PLAN.md](./PLAN.md).
 
 ## Setup & running
