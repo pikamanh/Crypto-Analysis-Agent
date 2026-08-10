@@ -1,4 +1,4 @@
-# Crypto-Researcher
+# Crypto-Analysis-Agent
 
 An agentic AI **crypto futures trading bot**: continuously monitors the market,
 generates structured trading signals, passes them through a risk-management layer,
