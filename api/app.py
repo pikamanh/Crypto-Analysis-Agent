@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from execution.execution_engine import get_engine
 from scheduler.loop import KILL_SWITCH_PATH, engage_kill_switch, is_kill_switch_active, release_kill_switch
 from storage import state
+from api.options_engine import get_options_dashboard
 
 load_dotenv()
 
@@ -116,6 +117,16 @@ def start_trading() -> ActionResponse:
 def stop_trading(body: StopRequest = StopRequest()) -> ActionResponse:
     engage_kill_switch(body.reason)
     return ActionResponse(kill_switch_active=True, message=f"Kill switch engaged ({body.reason}) — scheduler will skip new orders.")
+
+
+@app.get("/api/options/dashboard", include_in_schema=False)
+def options_dashboard() -> dict:
+    # Public market analytics, not bot control — intentionally unauthenticated.
+    try:
+        return get_options_dashboard()
+    except Exception as exc:
+        logger.exception("Failed to build BTC options dashboard.")
+        raise HTTPException(status_code=502, detail=f"Upstream options data unavailable: {exc}")
 
 
 if __name__ == "__main__":
