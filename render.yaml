@@ -15,5 +15,3 @@ services:
         sync: false
       - key: BINANCE_LIVE_TRADING
         value: "false"
-      - key: OPENAI_API_KEY
-        value: "not-needed"

@@ -21,9 +21,12 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
 from execution.execution_engine import get_engine
-from scheduler.loop import KILL_SWITCH_PATH, engage_kill_switch, is_kill_switch_active, release_kill_switch
 from storage import state
 from api.options_engine import get_options_dashboard
+
+# scheduler.loop pulls in agents.signal_agent, which builds an OpenAI client
+# at import time — importing it lazily keeps dashboard-only deploys (no
+# scheduler process, no OPENAI_API_KEY) from crashing on startup.
 
 load_dotenv()
 
@@ -84,6 +87,8 @@ class ActionResponse(BaseModel):
 
 @app.get("/status", response_model=StatusResponse, dependencies=[Depends(require_auth)])
 def get_status() -> StatusResponse:
+    from scheduler.loop import KILL_SWITCH_PATH, is_kill_switch_active
+
     equity, equity_error = None, None
     try:
         equity = get_engine().get_account_equity()
@@ -109,12 +114,16 @@ def get_positions(symbol: Optional[str] = None) -> List[state.Position]:
 
 @app.post("/start", response_model=ActionResponse, dependencies=[Depends(require_auth)])
 def start_trading() -> ActionResponse:
+    from scheduler.loop import release_kill_switch
+
     release_kill_switch()
     return ActionResponse(kill_switch_active=False, message="Kill switch released — scheduler will trade on its next cycle.")
 
 
 @app.post("/stop", response_model=ActionResponse, dependencies=[Depends(require_auth)])
 def stop_trading(body: StopRequest = StopRequest()) -> ActionResponse:
+    from scheduler.loop import engage_kill_switch
+
     engage_kill_switch(body.reason)
     return ActionResponse(kill_switch_active=True, message=f"Kill switch engaged ({body.reason}) — scheduler will skip new orders.")
 
