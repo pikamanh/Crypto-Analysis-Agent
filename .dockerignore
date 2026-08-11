@@ -1,5 +1,9 @@
 .venv
 .git
+.env
+.env.*
+credentials.json
+token.pickle
 **/__pycache__
 *.pyc
 storage/trading_state.db

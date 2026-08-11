@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: crypto-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore
+    healthCheckPath: /
+    dockerCommand: uvicorn api.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: API_USERNAME
+        sync: false
+      - key: API_PASSWORD
+        sync: false
+      - key: BINANCE_LIVE_TRADING
+        value: "false"
