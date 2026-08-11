@@ -143,6 +143,7 @@ def _build_chain(spot: float) -> List[dict]:
         if not inst:
             continue
         oi = float(b.get("open_interest") or 0.0)
+        volume = float(b.get("volume") or 0.0)
         mark_iv = b.get("mark_iv")
         if mark_iv is None or mark_iv <= 0 or oi <= 0:
             continue
@@ -170,6 +171,7 @@ def _build_chain(spot: float) -> List[dict]:
                 "t_years": t_years,
                 "is_call": is_call,
                 "oi": oi,
+                "volume": volume,
                 "iv": sigma,
                 "contract_size": contract_size,
                 "gamma": gamma,
@@ -410,6 +412,23 @@ def _top_n_by(strike_rows: Dict[float, dict], key: str, n: int = 3) -> List[dict
     return [{"strike": k, "value": v[key]} for k, v in ranked]
 
 
+def _top_n_abs_gex(strike_rows: Dict[float, dict], n: int = 10) -> List[dict]:
+    """Top strikes ranked by |net GEX| — the public "GEX Level" leaderboard."""
+    ranked = sorted(strike_rows.items(), key=lambda kv: abs(kv[1]["net_gex"]), reverse=True)[:n]
+    return [
+        {
+            "rank": i + 1,
+            "strike": k,
+            "net_gex": v["net_gex"],
+            "call_gex": v["call_gex"],
+            "put_gex": v["put_gex"],
+            "call_oi": v["call_oi"],
+            "put_oi": v["put_oi"],
+        }
+        for i, (k, v) in enumerate(ranked)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -434,6 +453,10 @@ def get_options_dashboard() -> dict:
     put_gex = sum(v["put_gex"] for v in strike_rows_all.values())
     call_dex = sum(r["dex"] for r in rows if r["is_call"])
     put_dex = sum(r["dex"] for r in rows if not r["is_call"])
+    total_abs_dex = sum(abs(r["dex"]) for r in rows)
+    total_call_volume = sum(r["volume"] for r in rows if r["is_call"])
+    total_put_volume = sum(r["volume"] for r in rows if not r["is_call"])
+    top10_gex = _top_n_abs_gex(strike_rows_all, 10)
 
     levels = _key_levels(strike_rows_all, spot, rows)
     gamma_regime = _gamma_regime(total_gex, total_abs_gex)
@@ -446,6 +469,23 @@ def get_options_dashboard() -> dict:
 
     first_expiry = expiry_set[0] if len(expiry_set) > 0 else None
     next_expiry = expiry_set[1] if len(expiry_set) > 1 else None
+
+    # 0DTE = expiry landing today (UTC); fall back to the nearest expiry.
+    zero_dte_expiry = next(
+        (e for e in expiry_set if datetime.fromtimestamp(e / 1000, tz=timezone.utc).date() == now.date()),
+        first_expiry,
+    )
+    zero_dte_rows = rows_by_expiry.get(zero_dte_expiry, []) if zero_dte_expiry is not None else []
+    zero_dte_strike_rows = _aggregate_by_strike(zero_dte_rows)
+    zero_dte_levels = _key_levels(zero_dte_strike_rows, spot, zero_dte_rows)
+    expiring_gex = sum(v["net_gex"] for v in zero_dte_strike_rows.values())
+
+    # Deribit settles daily options at 08:00 UTC — the closest crypto analogue to
+    # equities' EOD/RTH close. Once it passes, 0DTE naturally rolls to the next
+    # calendar day via the fallback above; expose the countdown for the UI.
+    settlement_today = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    next_settlement = settlement_today if now < settlement_today else settlement_today + timedelta(days=1)
+    next_settlement_ms = int(next_settlement.timestamp() * 1000)
 
     first_expiration = (
         _expiry_block(rows_by_expiry[first_expiry], spot, total_gex, "First Expiration", first_expiry)
@@ -488,6 +528,9 @@ def get_options_dashboard() -> dict:
     atm_sigma = iv / 100.0 if iv else (sum(r["iv"] for r in rows) / len(rows) if rows else 0.5)
     expected_move_1d_pct = atm_sigma * math.sqrt(1 / 365.0) * 100.0
     expected_move_1d_usd = spot * expected_move_1d_pct / 100.0
+    day_max = spot + expected_move_1d_usd
+    day_min = spot - expected_move_1d_usd
+    distance_to_hvl_pct = (abs(spot - levels["hvl"]) / spot * 100.0) if levels["hvl"] else None
 
     # Multi-expiration GEX view: per-expiration totals plus each expiration's
     # own strike profile, so the frontend can let the user pick which to plot.
@@ -521,6 +564,7 @@ def get_options_dashboard() -> dict:
             "gex_data_ts": chain_ts,
             "oi_data_ts": chain_ts,
             "generated_at": now.isoformat(),
+            "next_settlement_utc_ms": next_settlement_ms,
         },
         "market_summary": {
             "spot_price": spot,
@@ -545,12 +589,34 @@ def get_options_dashboard() -> dict:
         "key_levels": {
             "spot_price": spot,
             "call_resistance": levels["call_resistance"],
+            "call_resistance_0dte": zero_dte_levels["call_resistance"],
             "put_support": levels["put_support"],
+            "put_support_0dte": zero_dte_levels["put_support"],
             "hvl": levels["hvl"],
+            "high_vol_level": levels["hvl"],
+            "day_max": day_max,
+            "day_min": day_min,
+            "distance_to_hvl_pct": distance_to_hvl_pct,
+            "implied_volatility_30d_pct": iv,
+            "historical_volatility_30d_pct": hv,
+            "iv_rank_pct": iv_rank,
+            "total_call_volume": total_call_volume,
+            "total_put_volume": total_put_volume,
+            "total_oi": total_oi,
+            "total_call_oi": call_oi,
+            "total_put_oi": put_oi,
+            "total_gex": total_abs_gex,
+            "net_gex": total_gex,
+            "expiring_gex": expiring_gex,
+            "put_call_gex_ratio": (put_gex / call_gex) if call_gex else None,
+            "total_dex": total_abs_dex,
+            "net_dex": total_dex,
+            "put_call_dex_ratio": (put_dex / call_dex) if call_dex else None,
             "max_gex_strike": levels["max_gex_strike"],
             "max_call_oi_strike": levels["max_call_oi_strike"],
             "max_put_oi_strike": levels["max_put_oi_strike"],
         },
+        "gex_levels": top10_gex,
         "gex_concentration": {
             "largest_positive_gex_strike": largest_pos_gex,
             "largest_negative_gex_strike": largest_neg_gex,

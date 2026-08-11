@@ -77,6 +77,49 @@
   .card.spot-card { border-color: rgba(255,255,255,.22); background: var(--surface-3); }
   .card.spot-card .val { font-size: 24px; }
 
+  /* Key Levels tile grid (Market Summary redesign) */
+  .kl-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .kl-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+  .kl-head h2 { font-size: 15px; font-weight: 700; margin: 0 0 4px; color: var(--text); }
+  .kl-head .kl-sub { font-size: 11.5px; color: var(--text-dim); line-height: 1.4; max-width: 520px; }
+  .kl-dots { color: var(--text-dim); font-size: 16px; line-height: 1; padding: 2px 4px; user-select: none; }
+  .kl-settlement { text-align: right; white-space: nowrap; flex-shrink: 0; }
+  .kl-settlement-label { font-size: 10px; color: var(--text-dim); margin-bottom: 3px; }
+  .kl-settlement-val { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--text); }
+  .kl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 8px; }
+  .kl-tile {
+    padding: 12px 10px; border-top: 1px solid var(--border);
+  }
+  .kl-tile:nth-child(-n+3) { border-top: none; }
+  .kl-tile .kl-label { font-size: 11px; color: var(--text-dim); margin: 0 0 6px; }
+  .kl-tile .kl-val { font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: var(--text); }
+  .kl-tile .kl-val.pos { color: var(--pos); }
+  .kl-tile .kl-val.neg { color: var(--neg); }
+  @media (max-width: 720px) {
+    .kl-grid { grid-template-columns: repeat(2, 1fr); }
+    .kl-tile:nth-child(-n+3) { border-top: 1px solid var(--border); }
+    .kl-tile:nth-child(-n+2) { border-top: none; }
+  }
+
+  /* GEX Level table (top 10 by absolute GEX) */
+  .gexlvl-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; margin-top: 10px; }
+  .gexlvl-table th {
+    text-align: right; font-family: var(--font-sans); font-size: 10px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-dim); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  .gexlvl-table th:first-child, .gexlvl-table td:first-child { text-align: left; }
+  .gexlvl-table td { text-align: right; padding: 8px; border-bottom: 1px solid var(--border); }
+  .gexlvl-table tr:last-child td { border-bottom: none; }
+  .gexlvl-table .rank-badge {
+    display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+    border-radius: 5px; background: var(--surface-2); color: var(--text-muted); font-size: 11px; font-weight: 700;
+  }
+  .gexlvl-table .pos { color: var(--pos); }
+  .gexlvl-table .neg { color: var(--neg); }
+
   .gamma-pill {
     display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono);
     font-size: 12px; font-weight: 700; padding: 2px 0;
@@ -214,10 +257,44 @@
 
     <div id="dashboard-content" style="display:none">
 
-      <!-- 1. MARKET SUMMARY -->
+      <!-- 1. KEY LEVELS (market summary redesign) -->
       <section>
-        <p class="section-title">Market Summary</p>
-        <div class="cards n8" id="summary-cards"></div>
+        <div class="kl-card">
+          <div class="kl-head">
+            <div>
+              <h2>Key Levels</h2>
+              <div class="kl-sub">Summarizes options positioning data, highlighting essential levels to guide your trading decisions.</div>
+            </div>
+            <div class="kl-settlement">
+              <div class="kl-settlement-label">0DTE settlement (08:00 UTC)</div>
+              <div class="kl-settlement-val" id="settlement-countdown">—</div>
+            </div>
+            <div class="kl-dots">&#8942;</div>
+          </div>
+          <div class="kl-grid" id="key-levels-grid"></div>
+        </div>
+      </section>
+
+      <!-- 1b. GEX LEVEL (top 10 by absolute GEX) -->
+      <section>
+        <p class="section-title">GEX Level</p>
+        <div class="big-card">
+          <div class="chart-sub" style="margin-bottom:6px;">Top 10 strikes ranked by absolute gamma exposure (GEX).</div>
+          <table class="gexlvl-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Strike</th>
+                <th>Net GEX</th>
+                <th>Call GEX</th>
+                <th>Put GEX</th>
+                <th>Call OI</th>
+                <th>Put OI</th>
+              </tr>
+            </thead>
+            <tbody id="gex-level-body"></tbody>
+          </table>
+        </div>
       </section>
 
       <!-- 2 & 3: Positioning + Key Levels -->
@@ -227,7 +304,7 @@
           <div class="big-card" id="positioning-card"></div>
         </section>
         <section>
-          <p class="section-title">Key Levels <span id="levels-sub" style="font-weight:400; color:var(--text-muted);"></span></p>
+          <p class="section-title">Levels by Expiration <span id="levels-sub" style="font-weight:400; color:var(--text-muted);"></span></p>
           <div class="big-card" id="levels-card"></div>
         </section>
       </div>
@@ -349,7 +426,9 @@
     errBanner: document.getElementById("err-banner"),
     loadingRow: document.getElementById("loading-row"),
     content: document.getElementById("dashboard-content"),
-    summaryCards: document.getElementById("summary-cards"),
+    keyLevelsGrid: document.getElementById("key-levels-grid"),
+    settlementCountdown: document.getElementById("settlement-countdown"),
+    gexLevelBody: document.getElementById("gex-level-body"),
     positioningCard: document.getElementById("positioning-card"),
     levelsCard: document.getElementById("levels-card"),
     expSelect: document.getElementById("exp-select"),
@@ -396,6 +475,10 @@
     if (n === null || n === undefined || isNaN(n)) return "—";
     return n.toFixed(2);
   }
+  function fmtNum(n, digits) {
+    if (n === null || n === undefined || isNaN(n)) return "—";
+    return n.toFixed(digits === undefined ? 2 : digits);
+  }
   function fmtStrike(n) {
     if (n === null || n === undefined) return "—";
     return "$" + Math.round(n).toLocaleString("en-US");
@@ -417,33 +500,80 @@
   function signClass(n) { return n > 0 ? "pos" : n < 0 ? "neg" : ""; }
 
   // ---------------------------------------------------------------------
-  // 1. Market Summary
+  // 1. Key Levels (market summary tile grid)
   // ---------------------------------------------------------------------
-  function renderSummary(d) {
-    var m = d.market_summary;
-    var prevSpot = renderSummary._prevSpot;
-    var change = (prevSpot !== undefined) ? m.spot_price - prevSpot : null;
-    renderSummary._prevSpot = m.spot_price;
-    var changePct = change !== null && prevSpot ? (change / prevSpot * 100) : null;
-
-    var regimeLabel = m.gamma_regime === "positive" ? "Positive" : m.gamma_regime === "negative" ? "Negative" : "Neutral";
-    var regimeClass = m.gamma_regime === "positive" ? "pos" : m.gamma_regime === "negative" ? "neg" : "";
-
-    var cards = [
-      { label: "BTC Price", val: fmtUsd0(m.spot_price), sub: "spot index (Deribit)" },
-      { label: "24h Session Δ", val: change === null ? "—" : (change >= 0 ? "+" : "") + fmtUsd0(change), cls: change === null ? "" : signClass(change), sub: changePct === null ? "since last refresh" : (changePct >= 0 ? "+" : "") + changePct.toFixed(2) + "% since last refresh" },
-      { label: "Put/Call OI Ratio", val: fmtRatio(m.put_call_oi_ratio), sub: m.put_call_oi_ratio > 1 ? "put-heavy" : "call-heavy" },
-      { label: "Expected Move (1D)", val: "±" + fmtPct(m.expected_move_1d_pct, 2), sub: "≈ ±" + fmtUsd0(m.expected_move_1d_usd) },
-      { label: "Gamma Condition", val: regimeLabel, cls: regimeClass, sub: "dealer gamma regime" },
-      { label: "Implied Volatility", val: fmtPct(m.implied_volatility_pct, 1), sub: "BTC DVOL index" },
-      { label: "Historical Volatility", val: fmtPct(m.historical_volatility_pct, 1), sub: "30D realized, annualized" },
-      { label: "IV Rank", val: fmtPct(m.iv_rank_pct, 0), sub: "90D percentile range" },
+  function renderKeyLevelsGrid(d) {
+    var k = d.key_levels || {};
+    var tiles = [
+      { label: "Spot Price", val: fmtUsd0(k.spot_price) },
+      { label: "Call Resistance", val: fmtUsd0(k.call_resistance) },
+      { label: "Call Resistance 0DTE", val: fmtUsd0(k.call_resistance_0dte) },
+      { label: "High Vol Level", val: fmtUsd0(k.high_vol_level) },
+      { label: "Put Support", val: fmtUsd0(k.put_support) },
+      { label: "Put Support 0DTE", val: fmtUsd0(k.put_support_0dte) },
+      { label: "1D Max.", val: fmtUsd0(k.day_max) },
+      { label: "1D Min.", val: fmtUsd0(k.day_min) },
+      { label: "Distance to HVL %", val: fmtPct(k.distance_to_hvl_pct, 2) },
+      { label: "Implied Vol 30D", val: fmtNum(k.implied_volatility_30d_pct, 3) },
+      { label: "Historical Vol 30D", val: fmtNum(k.historical_volatility_30d_pct, 3) },
+      { label: "IV Rank", val: fmtPct(k.iv_rank_pct, 0) },
+      { label: "Total Call Volume", val: fmtLarge(k.total_call_volume) },
+      { label: "Total Put Volume", val: fmtLarge(k.total_put_volume) },
+      { label: "Total OI", val: fmtLarge(k.total_oi) },
+      { label: "Total Call OI", val: fmtLarge(k.total_call_oi) },
+      { label: "Total Put OI", val: fmtLarge(k.total_put_oi) },
+      { label: "Total GEX", val: "$" + fmtLarge(k.total_gex) },
+      { label: "Net GEX", val: "$" + fmtLarge(k.net_gex), cls: signClass(k.net_gex) },
+      { label: "Expiring GEX", val: "$" + fmtLarge(k.expiring_gex), cls: signClass(k.expiring_gex) },
+      { label: "Put/Call GEX", val: fmtRatio(k.put_call_gex_ratio) },
+      { label: "Total DEX", val: "$" + fmtLarge(k.total_dex) },
+      { label: "Net DEX", val: "$" + fmtLarge(k.net_dex), cls: signClass(k.net_dex) },
+      { label: "Put/Call DEX", val: fmtRatio(k.put_call_dex_ratio) },
     ];
-    el.summaryCards.innerHTML = cards.map(function (c) {
-      return '<div class="card' + (c.label === "BTC Price" ? " spot-card" : "") + '">' +
-        '<p class="label">' + c.label + '</p>' +
-        '<div class="val ' + (c.cls || "") + '">' + c.val + '</div>' +
-        '<div class="sub">' + c.sub + '</div></div>';
+    el.keyLevelsGrid.innerHTML = tiles.map(function (t) {
+      return '<div class="kl-tile">' +
+        '<p class="kl-label">' + t.label + '</p>' +
+        '<div class="kl-val ' + (t.cls || "") + '">' + t.val + '</div></div>';
+    }).join("");
+  }
+
+  // Countdown to Deribit's daily 08:00 UTC option settlement — the crypto
+  // analogue to equities' EOD/RTH close. 0DTE rolls to the next day right
+  // after this fires (handled server-side; this just ticks the clock).
+  var settlementTargetMs = null;
+  var settlementTimer = null;
+  function tickSettlementCountdown() {
+    if (!settlementTargetMs) return;
+    var diff = settlementTargetMs - Date.now();
+    if (diff <= 0) { el.settlementCountdown.textContent = "00:00:00"; return; }
+    var h = Math.floor(diff / 3600000);
+    var m = Math.floor((diff % 3600000) / 60000);
+    var s = Math.floor((diff % 60000) / 1000);
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    el.settlementCountdown.textContent = pad(h) + ":" + pad(m) + ":" + pad(s);
+  }
+  function renderSettlementCountdown(d) {
+    var ms = d.meta && d.meta.next_settlement_utc_ms;
+    if (!ms) return;
+    settlementTargetMs = ms;
+    tickSettlementCountdown();
+    if (!settlementTimer) settlementTimer = setInterval(tickSettlementCountdown, 1000);
+  }
+
+  // ---------------------------------------------------------------------
+  // 1b. GEX Level — top 10 strikes by |GEX|
+  // ---------------------------------------------------------------------
+  function renderGexLevels(d) {
+    var rows = d.gex_levels || [];
+    el.gexLevelBody.innerHTML = rows.map(function (r) {
+      return '<tr>' +
+        '<td><span class="rank-badge">' + r.rank + '</span></td>' +
+        '<td>' + fmtStrike(r.strike) + '</td>' +
+        '<td class="' + signClass(r.net_gex) + '">$' + fmtLarge(r.net_gex) + '</td>' +
+        '<td class="pos">$' + fmtLarge(r.call_gex) + '</td>' +
+        '<td class="neg">$' + fmtLarge(r.put_gex) + '</td>' +
+        '<td>' + fmtLarge(r.call_oi) + '</td>' +
+        '<td>' + fmtLarge(r.put_oi) + '</td></tr>';
     }).join("");
   }
 
@@ -990,7 +1120,9 @@
     el.content.style.display = "block";
 
     populateExpSelect(d);
-    renderSummary(d);
+    renderKeyLevelsGrid(d);
+    renderSettlementCountdown(d);
+    renderGexLevels(d);
     redrawGexChart();
     drawOiChart(el.oiChart, el.oiTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
     renderExpirationStructure(d);
