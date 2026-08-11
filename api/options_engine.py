@@ -167,9 +167,11 @@ def _build_chain(spot: float) -> List[dict]:
                 "instrument": name,
                 "strike": strike,
                 "expiry_ms": expiry_ms,
+                "t_years": t_years,
                 "is_call": is_call,
                 "oi": oi,
                 "iv": sigma,
+                "contract_size": contract_size,
                 "gamma": gamma,
                 "delta": delta,
                 "gex": gex,
@@ -193,10 +195,58 @@ def _week_bounds(ref: datetime) -> Tuple[datetime, datetime]:
     return start, start + timedelta(days=7)
 
 
-def _key_levels(strike_rows: Dict[float, dict], spot: float) -> dict:
+def _gamma_flip(rows: List[dict], spot: float) -> Optional[float]:
+    """True zero-gamma / HVL level: the underlying price at which *total*
+    dealer gamma exposure crosses zero.
+
+    Each option's gamma depends on the underlying price via moneyness, so the
+    flip point cannot be read off GEX computed at today's spot — it requires
+    re-pricing gamma for every strike across a grid of hypothetical spot
+    levels and finding where the aggregate switches sign. This is the same
+    method public GEX trackers (e.g. SpotGamma) use for their "Gamma Flip" /
+    "HVL" line.
+    """
+    if not rows:
+        return None
+
+    strikes = [r["strike"] for r in rows]
+    lo, hi = min(spot * 0.5, min(strikes)), max(spot * 1.5, max(strikes))
+    steps = 300
+    grid = [lo + (hi - lo) * i / steps for i in range(steps + 1)]
+
+    totals = []
+    for s in grid:
+        total = 0.0
+        for r in rows:
+            g = bs_gamma(s, r["strike"], r["t_years"], r["iv"])
+            dollar_gamma = g * r["oi"] * r["contract_size"] * s * s * 0.01
+            total += dollar_gamma if r["is_call"] else -dollar_gamma
+        totals.append(total)
+
+    crossings = []
+    for i in range(len(grid) - 1):
+        t0, t1 = totals[i], totals[i + 1]
+        if t0 == 0:
+            crossings.append(grid[i])
+        elif (t0 < 0) != (t1 < 0):
+            frac = t0 / (t0 - t1)
+            crossings.append(grid[i] + frac * (grid[i + 1] - grid[i]))
+
+    if not crossings:
+        # gamma never flips sign across the scanned range (e.g. one-sided
+        # book) — fall back to the price with smallest |total gamma|.
+        return min(zip(grid, totals), key=lambda gt: abs(gt[1]))[0]
+
+    # multiple crossings can occur with lumpy OI; the tradable one is the
+    # one nearest today's spot.
+    return min(crossings, key=lambda c: abs(c - spot))
+
+
+def _key_levels(strike_rows: Dict[float, dict], spot: float, rows: Optional[List[dict]] = None) -> dict:
     """Derive call resistance / put support / HVL / max-GEX / max-OI strikes
     from a per-strike aggregation. `strike_rows` maps strike -> aggregated dict
-    with keys: net_gex, call_gex, put_gex, call_oi, put_oi.
+    with keys: net_gex, call_gex, put_gex, call_oi, put_oi. `rows` (raw,
+    per-instrument) is used for the HVL/gamma-flip scan when supplied.
     """
     if not strike_rows:
         return {
@@ -206,36 +256,31 @@ def _key_levels(strike_rows: Dict[float, dict], spot: float) -> dict:
 
     strikes_sorted = sorted(strike_rows.keys())
 
-    # Call resistance: strike at/above spot with the strongest call-side gamma
-    # concentration — where dealer hedging of short calls tends to cap upside.
+    # Call resistance: strike at/above spot with the largest *net* GEX bar —
+    # matches the net_gex bars actually drawn on the chart. Using call-side
+    # GEX alone (ignoring that strike's put contribution) can pick a strike
+    # that isn't the tallest bar on screen whenever call/put OI overlap at
+    # the same strike.
     above = [k for k in strikes_sorted if k >= spot]
-    call_resistance = max(above, key=lambda k: strike_rows[k]["call_gex"]) if above else None
+    call_resistance = max(above, key=lambda k: strike_rows[k]["net_gex"]) if above else None
 
-    # Put support: strike at/below spot with the strongest put-side gamma
-    # concentration (magnitude, not net sign) — where hedging of short puts
-    # tends to cushion downside.
+    # Put support: strike at/below spot with the most negative *net* GEX bar
+    # — same reasoning, kept consistent with the plotted net_gex column
+    # rather than the isolated put_gex figure.
     below = [k for k in strikes_sorted if k <= spot]
-    put_support = max(below, key=lambda k: abs(strike_rows[k]["put_gex"])) if below else None
+    put_support = min(below, key=lambda k: strike_rows[k]["net_gex"]) if below else None
 
-    # HVL ("hedge vol level" / zero-gamma flip): the strike where cumulative
-    # net GEX actually changes sign scanning low-to-high strikes — not just
-    # wherever the running total happens to be smallest, which is skewed
-    # toward the low end where cumulative OI (and thus GEX) is still thin.
-    cum = 0.0
-    cum_by_strike = []
-    for k in strikes_sorted:
-        cum += strike_rows[k]["net_gex"]
-        cum_by_strike.append((k, cum))
-
-    hvl = None
-    for (k_prev, cum_prev), (k_curr, cum_curr) in zip(cum_by_strike, cum_by_strike[1:]):
-        if cum_prev == 0 or (cum_prev < 0) != (cum_curr < 0):
-            # pick whichever side of the flip is numerically closer to zero
-            hvl = k_curr if abs(cum_curr) < abs(cum_prev) else k_prev
-            break
+    # HVL ("hedge vol level" / zero-gamma flip): the underlying price where
+    # *total* dealer gamma exposure crosses zero, found by re-pricing gamma
+    # across a grid of hypothetical spot levels (see `_gamma_flip`). Snapped
+    # to the nearest strike so it lines up with the strike-bucketed chart.
+    if rows:
+        flip_price = _gamma_flip(rows, spot)
+        hvl = min(strikes_sorted, key=lambda k: abs(k - flip_price)) if flip_price is not None else None
+    else:
+        hvl = None
     if hvl is None:
-        # book never flips sign — fall back to the smallest-magnitude point
-        hvl = min(cum_by_strike, key=lambda kc: abs(kc[1]))[0]
+        hvl = min(strikes_sorted, key=lambda k: abs(strike_rows[k]["net_gex"]))
 
     max_gex_strike = max(strikes_sorted, key=lambda k: abs(strike_rows[k]["net_gex"]))
     max_call_oi_strike = max(strikes_sorted, key=lambda k: strike_rows[k]["call_oi"])
@@ -297,7 +342,7 @@ def _positioning_block(rows_for_expiry: List[dict], strike_rows: Dict[float, dic
 def _expiry_block(rows_for_expiry: List[dict], spot: float, total_gex_all: float, label: str, expiry_ms: Optional[int] = None,
                    period_label: Optional[str] = None) -> dict:
     strike_rows = _aggregate_by_strike(rows_for_expiry)
-    levels = _key_levels(strike_rows, spot)
+    levels = _key_levels(strike_rows, spot, rows_for_expiry)
     total_gex = sum(v["net_gex"] for v in strike_rows.values())
     gex_expiring_pct = (abs(total_gex) / abs(total_gex_all) * 100.0) if total_gex_all else 0.0
 
@@ -390,7 +435,7 @@ def get_options_dashboard() -> dict:
     call_dex = sum(r["dex"] for r in rows if r["is_call"])
     put_dex = sum(r["dex"] for r in rows if not r["is_call"])
 
-    levels = _key_levels(strike_rows_all, spot)
+    levels = _key_levels(strike_rows_all, spot, rows)
     gamma_regime = _gamma_regime(total_gex, total_abs_gex)
 
     # Expirations, sorted by time.
@@ -450,7 +495,7 @@ def get_options_dashboard() -> dict:
     for exp_ms in expiry_set:
         exp_rows = rows_by_expiry[exp_ms]
         exp_strike_rows = _aggregate_by_strike(exp_rows)
-        exp_levels = _key_levels(exp_strike_rows, spot)
+        exp_levels = _key_levels(exp_strike_rows, spot, exp_rows)
         multi_expiration.append(
             {
                 "expiration_date": _fmt_expiry(exp_ms),
