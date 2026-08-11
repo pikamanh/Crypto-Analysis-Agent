@@ -594,6 +594,7 @@ def get_options_dashboard() -> dict:
             "put_support_0dte": zero_dte_levels["put_support"],
             "hvl": levels["hvl"],
             "high_vol_level": levels["hvl"],
+            "high_vol_level_0dte": zero_dte_levels["hvl"],
             "day_max": day_max,
             "day_min": day_min,
             "distance_to_hvl_pct": distance_to_hvl_pct,
