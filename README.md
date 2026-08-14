@@ -11,6 +11,12 @@ the current focus is the trading bot.
 (see [GO_LIVE_CHECKLIST.md](./GO_LIVE_CHECKLIST.md)), and a kill switch is always
 available to stop it immediately.
 
+**Live demo**: [crypto-analysis-agent-faxs.onrender.com](https://crypto-analysis-agent-faxs.onrender.com/)
+— BTC options dashboard (GEX/DEX, key levels, OI by strike) deployed on
+Render (`render.yaml`, free tier, Singapore region). This is a dashboard-only
+deploy — the trading scheduler/execution loop does not run there, so
+`/status`, `/positions`, `/start`, `/stop` reflect no live bot process.
+
 ## Architecture
 
 ```
@@ -98,7 +104,9 @@ The project is at **Stage 5/5** per [PLAN.md](./PLAN.md):
 - [x] **Stage 3** — Option Flow Agent (Deribit, GEX/DEX), Sentiment Agent (economic calendar), structured Signal Agent
 - [x] **Stage 4** — Risk Manager, Execution Engine (testnet), Scheduler, kill switch, alerting
 - [~] **Stage 5** — Backtest engine (done), FastAPI + Dashboard (done), Dockerization (done),
-  VPS deployment guide (done, **not yet deployed to an actual VPS**);
+  VPS deployment guide (done, **not yet deployed to an actual VPS**); options dashboard
+  deployed to Render as a **dashboard-only** instance (see Live demo above — no scheduler,
+  no order execution running there);
   **long-running testnet paper trading has not been run yet** — `scheduler/loop.py`
   needs to run continuously for several weeks before considering go-live
 
