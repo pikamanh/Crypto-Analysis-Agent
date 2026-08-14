@@ -1,5 +1,6 @@
+import json
 import os
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from api.options_engine import get_options_dashboard
@@ -16,6 +17,16 @@ client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     base_url=os.getenv("BASE_URL")
 )
+
+# Only re-run the LLM when the data has moved enough to change the scenarios
+# it would generate. Small noise between refreshes reuses the last analysis.
+CACHE_PATH = os.path.join(os.path.dirname(__file__), ".option_cache.json")
+
+PRICE_LEVEL_PCT_THRESHOLD = 0.003   # spot, CR, PS, HVL, strong GEX strikes: 0.3%
+VOL_ABS_THRESHOLD = 1.0             # iv, hv: 1 vol point
+IV_RANK_ABS_THRESHOLD = 5.0         # iv rank: 5 points
+GEX_NET_PCT_THRESHOLD = 0.15        # strong GEX net gamma magnitude: 15%
+GEX_EXPIRING_ABS_THRESHOLD = 5.0    # gex expiring %: 5 points
 
 class KeyLevel(BaseModel):
     spotPrice: float
@@ -55,6 +66,74 @@ class OptionData(BaseModel):
     keyLevels: KeyLevel
     GEXLevels: GEXLevel
     expirationStructure: ExpirationStructure
+
+def _relevant_snapshot(option_data: "OptionData") -> dict:
+    """Fields that actually drive the scenarios in the system prompt."""
+    kl = option_data.keyLevels
+    strong = option_data.GEXLevels.strongLevels
+    exp = option_data.expirationStructure.firstExpiration
+
+    return {
+        "spotPrice": kl.spotPrice,
+        "cr": kl.cr,
+        "ps": kl.ps,
+        "hvl": kl.hvl,
+        "iv": kl.iv,
+        "hv": kl.hv,
+        "ivRank": kl.ivRank,
+        "strongLevels": [{"strike": g.strike, "netGex": g.netGex} for g in strong],
+        "firstExpirationGexExpiring": exp.gexExpirating,
+    }
+
+
+def _pct_move(old: float, new: float) -> float:
+    if old == 0:
+        return 0.0 if new == 0 else float("inf")
+    return abs(new - old) / abs(old)
+
+
+def _is_significant_change(old: dict, new: dict) -> bool:
+    for field in ("spotPrice", "cr", "ps", "hvl"):
+        if _pct_move(old[field], new[field]) >= PRICE_LEVEL_PCT_THRESHOLD:
+            return True
+
+    if abs(new["iv"] - old["iv"]) >= VOL_ABS_THRESHOLD:
+        return True
+    if abs(new["hv"] - old["hv"]) >= VOL_ABS_THRESHOLD:
+        return True
+    if abs(new["ivRank"] - old["ivRank"]) >= IV_RANK_ABS_THRESHOLD:
+        return True
+
+    if abs(new["firstExpirationGexExpiring"] - old["firstExpirationGexExpiring"]) >= GEX_EXPIRING_ABS_THRESHOLD:
+        return True
+
+    old_strong = old["strongLevels"]
+    new_strong = new["strongLevels"]
+    if len(old_strong) != len(new_strong):
+        return True
+    for old_g, new_g in zip(old_strong, new_strong):
+        if _pct_move(old_g["strike"], new_g["strike"]) >= PRICE_LEVEL_PCT_THRESHOLD:
+            return True
+        if _pct_move(old_g["netGex"], new_g["netGex"]) >= GEX_NET_PCT_THRESHOLD:
+            return True
+
+    return False
+
+
+def _load_cache() -> Optional[dict]:
+    if not os.path.exists(CACHE_PATH):
+        return None
+    try:
+        with open(CACHE_PATH, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _save_cache(snapshot: dict, analysis: str) -> None:
+    with open(CACHE_PATH, "w") as f:
+        json.dump({"snapshot": snapshot, "analysis": analysis}, f)
+
 
 def analyze_option_data():
     options = get_options_dashboard()
@@ -146,6 +225,11 @@ def analyze_option_data():
         expirationStructure=expiration_structure_schema
     )
 
+    snapshot = _relevant_snapshot(option_data)
+    cached = _load_cache()
+    if cached and not _is_significant_change(cached["snapshot"], snapshot):
+        return cached["analysis"]
+
     response = client.chat.completions.create(
         model=os.getenv("MODEL"),
         messages=[
@@ -154,7 +238,9 @@ def analyze_option_data():
         ]
     )
 
-    return response.choices[0].message.content
+    analysis = response.choices[0].message.content
+    _save_cache(snapshot, analysis)
+    return analysis
 
 if __name__ == "__main__":
     print(analyze_option_data())

@@ -398,9 +398,9 @@
         <div class="compare-grid" id="week-compare"></div>
       </section>
 
-      <!-- 10. MARKET STRUCTURE INTERPRETATION -->
+      <!-- 10. MARKET SIGNALS -->
       <section>
-        <p class="section-title">Market Structure Interpretation</p>
+        <p class="section-title">Market Signals</p>
         <div class="interp-card">
           <div id="interp-text"></div>
           <div class="disclaimer">Phân tích được tạo tự động từ dữ liệu Options hiện tại, mang tính tham khảo và không cấu thành khuyến nghị đầu tư. Không phải nhận định chắc chắn về hướng giá.</div>
@@ -1027,19 +1027,40 @@
   // ---------------------------------------------------------------------
   // 10. Market Structure Interpretation
   // ---------------------------------------------------------------------
-  function renderInterpretation(d) {
-    var m = d.market_summary, p = d.positioning, k = d.key_levels, g = d.gex_concentration;
-    var s = d.expiration_structure;
-    var regimeText = m.gamma_regime === "positive" ? "Positive Gamma" : m.gamma_regime === "negative" ? "Negative Gamma" : "Neutral Gamma";
+  function escapeHtml(s) {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
 
-    var paras = [];
-    paras.push("BTC hiện đang giao dịch quanh " + fmtUsd0(k.spot_price) + ". Thị trường Options cho thấy dealer positioning đang nghiêng về trạng thái <b>" + regimeText + "</b>, với Total GEX ước tính khoảng $" + fmtLarge(p.total_gex) + " và Put/Call GEX ở mức " + fmtRatio(p.put_call_gex_ratio) + ", trong khi Put/Call OI ghi nhận " + fmtRatio(p.put_call_oi_ratio) + ".");
-    paras.push("Vùng Put Support đáng chú ý tập trung quanh " + fmtStrike(k.put_support) + ", trong khi Call Resistance có xu hướng tập trung quanh " + fmtStrike(k.call_resistance) + ". HVL (mức gamma flip) hiện ước tính quanh " + fmtStrike(k.hvl) + " — vùng này có thể đóng vai trò ranh giới giữa các chế độ biến động khác nhau.");
-    paras.push("Positive Gamma lớn nhất tập trung tại vùng " + fmtStrike(g.largest_positive_gex_strike) + ", trong khi Negative Gamma tập trung quanh " + fmtStrike(g.largest_negative_gex_strike) + ". Open Interest lớn nhất phía Call nằm quanh " + fmtStrike(k.max_call_oi_strike) + " và phía Put quanh " + fmtStrike(k.max_put_oi_strike) + ", gợi ý đây có thể là các vùng có ảnh hưởng hedging đáng kể.");
-    paras.push("GEX của tuần hiện tại (" + (s.current_week.period || "") + ") cho thấy tổng GEX khoảng $" + fmtLarge(s.current_week.gex) + ", tương ứng khoảng " + fmtPct(s.current_week.gex_expiring_pct, 1) + " tổng GEX toàn thị trường sẽ đáo hạn trong tuần này. Trong khi đó, cấu trúc GEX của tuần tiếp theo (" + (s.next_week.period || "") + ") cho thấy tổng GEX khoảng $" + fmtLarge(s.next_week.gex) + ", có thể tạo ra động lực positioning khác biệt khi thị trường chuyển sang chu kỳ expiration mới.");
-    paras.push("Expected Move 1 ngày hiện tại vào khoảng ±" + fmtPct(m.expected_move_1d_pct, 2) + " (≈ ±" + fmtUsd0(m.expected_move_1d_usd) + "), với Implied Volatility ở mức " + fmtPct(m.implied_volatility_pct, 1) + " và IV Rank khoảng " + fmtPct(m.iv_rank_pct, 0) + " so với biên độ 90 ngày gần nhất — mức IV Rank này có xu hướng phản ánh mức độ \"đắt/rẻ\" tương đối của quyền chọn ở thời điểm hiện tại.");
+  function renderInterpretationText(text) {
+    var html = text
+      .split(/\n+/)
+      .map(function (line) { return line.trim(); })
+      .filter(function (line) { return line.length > 0; })
+      .map(function (line) {
+        return "<p>" + escapeHtml(line).replace(/\*\*(.+?):\*\*/, "<b>$1:</b>") + "</p>";
+      })
+      .join("");
+    el.interpText.innerHTML = html || "<p>Không có phân tích.</p>";
+  }
 
-    el.interpText.innerHTML = paras.map(function (p) { return "<p>" + p + "</p>"; }).join("");
+  var interpFetchInFlight = false;
+
+  async function refreshInterpretation() {
+    if (interpFetchInFlight) return;
+    interpFetchInFlight = true;
+    try {
+      var res = await fetch("/api/options/interpretation");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      renderInterpretationText(d.analysis);
+    } catch (e) {
+      el.interpText.innerHTML = '<p class="interp-error">Không thể tải phân tích: ' + escapeHtml(e.message) + '</p>';
+    } finally {
+      interpFetchInFlight = false;
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1131,7 +1152,7 @@
     renderGexConcentration(d);
     renderRegime(d);
     renderWeekCompare(d);
-    renderInterpretation(d);
+    refreshInterpretation();
     renderMeta(d);
 
     el.connDot.classList.remove("off");

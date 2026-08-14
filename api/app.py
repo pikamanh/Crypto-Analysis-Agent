@@ -138,6 +138,19 @@ def options_dashboard() -> dict:
         raise HTTPException(status_code=502, detail=f"Upstream options data unavailable: {exc}")
 
 
+@app.get("/api/options/interpretation", include_in_schema=False)
+def options_interpretation() -> dict:
+    # Lazy import: builds an OpenAI client at import time, which would crash
+    # dashboard-only deploys that don't set OPENAI_API_KEY.
+    from agents.option_agent import analyze_option_data
+
+    try:
+        return {"analysis": analyze_option_data()}
+    except Exception as exc:
+        logger.exception("Failed to generate market structure interpretation.")
+        raise HTTPException(status_code=502, detail=f"Interpretation unavailable: {exc}")
+
+
 if __name__ == "__main__":
     import uvicorn
 
