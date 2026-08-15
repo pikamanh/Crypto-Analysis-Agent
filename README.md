@@ -74,8 +74,7 @@ without them the app still runs, just without basic auth on the endpoints.
 
 ## Note
 
-The repo also contains an earlier, broader "agentic trading bot" effort
-(`scheduler/`, `execution/`, `risk/`, `storage/`, `backtest/`, `tools/`,
-`GO_LIVE_CHECKLIST.md`, `PLAN.md`, `DEPLOY.md`) that is **not part of the
-currently running product** — the deployed app above only serves the options
-dashboard and its interpretation agent.
+An earlier, broader "agentic trading bot" effort (signal agent, risk
+manager, execution engine, scheduler loop, backtest engine) has been removed
+from this repo — it's being rebuilt from scratch on top of the options
+analytics above (`api/options_engine.py`, `agents/option_agent.py`).
