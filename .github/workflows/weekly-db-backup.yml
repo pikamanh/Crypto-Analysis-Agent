@@ -18,11 +18,14 @@ jobs:
       - name: Install postgresql-client 18
         # Aiven's Postgres server is on 18.x; pg_dump requires client >= server
         # version, so the distro's default postgresql-client (16.x) fails.
+        # Debian doesn't repoint the unversioned `pg_dump` at the new version,
+        # so prepend its bin dir to PATH for the rest of the job.
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
