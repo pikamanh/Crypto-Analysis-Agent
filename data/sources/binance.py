@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
+
+from binance_common.errors import RateLimitBanError
 
 from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import (
     ConfigurationRestAPI,
@@ -28,6 +31,43 @@ EXCHANGE = "binance"
 
 _rest_client: Optional[DerivativesTradingUsdsFutures] = None
 _ws_client: Optional[DerivativesTradingUsdsFutures] = None
+
+# Shared IP-ban state — set whenever Binance returns -1003 (RateLimitBanError).
+# Once banned, further REST calls are skipped entirely (not even attempted)
+# until this timestamp passes, since retrying while banned can extend it.
+_banned_until: Optional[datetime] = None
+_BAN_TS_RE = re.compile(r"banned until (\d+)")
+
+
+class BinanceBannedError(Exception):
+    """Raised in place of an actual API call while an IP ban is still active."""
+
+
+def _is_banned() -> bool:
+    return _banned_until is not None and datetime.now(tz=timezone.utc) < _banned_until
+
+
+def _record_ban(exc: RateLimitBanError) -> None:
+    global _banned_until
+    match = _BAN_TS_RE.search(exc.error_message or "")
+    _banned_until = (
+        datetime.fromtimestamp(int(match.group(1)) / 1000, tz=timezone.utc)
+        if match
+        else datetime.now(tz=timezone.utc) + timedelta(minutes=10)
+    )
+    logger.error("Binance IP ban detected — pausing REST calls until %s", _banned_until)
+
+
+def _guarded(fn: Callable, *args, **kwargs):
+    """Runs `fn` unless we're already known to be banned, and records any new
+    ban so subsequent calls skip instead of hammering the API further."""
+    if _is_banned():
+        raise BinanceBannedError(f"skipping call — banned until {_banned_until}")
+    try:
+        return fn(*args, **kwargs)
+    except RateLimitBanError as exc:
+        _record_ban(exc)
+        raise
 
 
 def _get_rest_client() -> DerivativesTradingUsdsFutures:
@@ -57,7 +97,8 @@ def _get_ws_client() -> DerivativesTradingUsdsFutures:
 def fetch_last_closed_1m_candle(symbol: str = SYMBOL) -> dict:
     """Most recent *closed* 1m kline (limit=2, take the second-to-last —
     the last entry is the still-forming current candle)."""
-    response = _get_rest_client().rest_api.kline_candlestick_data(
+    response = _guarded(
+        _get_rest_client().rest_api.kline_candlestick_data,
         symbol=symbol,
         interval=KlineCandlestickDataIntervalEnum["INTERVAL_1m"].value,
         limit=2,
@@ -79,8 +120,8 @@ def fetch_last_closed_1m_candle(symbol: str = SYMBOL) -> dict:
 def fetch_futures_snapshot(symbol: str = SYMBOL) -> dict:
     """Open interest + funding/mark/index, merged into one snapshot row."""
     client = _get_rest_client().rest_api
-    oi = client.open_interest(symbol=symbol).data()
-    mark = client.mark_price(symbol=symbol).data().actual_instance
+    oi = _guarded(client.open_interest, symbol=symbol).data()
+    mark = _guarded(client.mark_price, symbol=symbol).data().actual_instance
 
     return {
         "ts": datetime.now(tz=timezone.utc),

@@ -21,6 +21,7 @@ load_dotenv()
 
 from data.db import init_db, insert_rows  # noqa: E402
 from data.sources import binance, deribit  # noqa: E402
+from data.sources.binance import BinanceBannedError  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -45,12 +46,16 @@ def poll_ohlcv_futures() -> None:
     try:
         candle = binance.fetch_last_closed_1m_candle()
         insert_rows("raw_ohlcv", OHLCV_COLUMNS, [_row_values(candle, OHLCV_COLUMNS)])
+    except BinanceBannedError as exc:
+        logger.info("OHLCV poll skipped: %s", exc)
     except Exception:
         logger.exception("OHLCV poll failed")
 
     try:
         futures = binance.fetch_futures_snapshot()
         insert_rows("raw_futures_snapshot", FUTURES_COLUMNS, [_row_values(futures, FUTURES_COLUMNS)])
+    except BinanceBannedError as exc:
+        logger.info("futures snapshot poll skipped: %s", exc)
     except Exception:
         logger.exception("futures snapshot poll failed")
 

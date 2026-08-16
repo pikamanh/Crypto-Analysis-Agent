@@ -3,6 +3,7 @@ credentials.json
 tests
 token.pickle
 .env
+*.pem
 .env.*
 !.env.example
 __pycache__/
