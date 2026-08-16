@@ -4,3 +4,8 @@ requests
 pydantic
 fastapi
 uvicorn
+psycopg2-binary
+binance-sdk-derivatives-trading-usds-futures
+google-api-python-client
+google-auth
+google-auth-oauthlib

@@ -8,3 +8,30 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     command: uvicorn api.app:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - timescaledb
+
+  ingest:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - .:/app
+    command: python -m data.ingest
+    depends_on:
+      - timescaledb
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: crypto_researcher
+      POSTGRES_USER: crypto_researcher
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-crypto_researcher}
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+volumes:
+  timescale_data:

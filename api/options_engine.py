@@ -183,6 +183,40 @@ def _build_chain(spot: float) -> List[dict]:
     return rows
 
 
+def get_raw_chain_snapshot() -> Tuple[float, List[dict]]:
+    """Raw per-instrument options data for the ingest pipeline — OI/IV/price
+    as published by Deribit, no derived greeks/GEX. Those are computed from
+    this raw snapshot in the feature layer, where the formula can change
+    without needing to re-fetch history."""
+    spot = _fetch_spot()
+    instruments = {i["instrument_name"]: i for i in _fetch_instruments()}
+    book = _fetch_book_summary()
+
+    rows = []
+    for b in book:
+        name = b["instrument_name"]
+        inst = instruments.get(name)
+        if not inst:
+            continue
+        oi = float(b.get("open_interest") or 0.0)
+        if oi <= 0:
+            continue
+        mark_iv = b.get("mark_iv")
+        expiry_ms = int(inst["expiration_timestamp"])
+        rows.append(
+            {
+                "expiry": datetime.fromtimestamp(expiry_ms / 1000, tz=timezone.utc).date(),
+                "strike": float(inst["strike"]),
+                "option_type": inst["option_type"],
+                "open_interest": oi,
+                "volume": float(b.get("volume") or 0.0),
+                "mark_iv": float(mark_iv) if mark_iv is not None else None,
+                "mark_price": float(b["mark_price"]) if b.get("mark_price") is not None else None,
+            }
+        )
+    return spot, rows
+
+
 # ---------------------------------------------------------------------------
 # Aggregation helpers
 # ---------------------------------------------------------------------------
