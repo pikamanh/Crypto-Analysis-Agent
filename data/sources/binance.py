@@ -20,8 +20,8 @@ from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futur
     DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_PROD_URL,
     DerivativesTradingUsdsFutures,
 )
-from binance_sdk_derivatives_trading_usds_futures.rest_api.models import (
-    KlineCandlestickDataIntervalEnum,
+from binance_sdk_derivatives_trading_usds_futures.websocket_streams.models import (
+    KlineCandlestickStreamsIntervalEnum,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,17 @@ _BAN_TS_RE = re.compile(r"banned until (\d+)")
 
 class BinanceBannedError(Exception):
     """Raised in place of an actual API call while an IP ban is still active."""
+
+
+class BinanceStreamNotReadyError(Exception):
+    """Raised when a WebSocket-fed cache hasn't received its first message yet."""
+
+
+# Latest values pushed by MarketDataListener's markPrice/kline_1m streams —
+# read by fetch_futures_snapshot/fetch_last_closed_1m_candle instead of REST,
+# since REST polling of these was what triggered Binance's IP ban (-1003).
+_latest_mark_price: Optional[dict] = None
+_latest_closed_candle: Optional[dict] = None
 
 
 def _is_banned() -> bool:
@@ -95,42 +106,32 @@ def _get_ws_client() -> DerivativesTradingUsdsFutures:
 
 
 def fetch_last_closed_1m_candle(symbol: str = SYMBOL) -> dict:
-    """Most recent *closed* 1m kline (limit=2, take the second-to-last —
-    the last entry is the still-forming current candle)."""
-    response = _guarded(
-        _get_rest_client().rest_api.kline_candlestick_data,
-        symbol=symbol,
-        interval=KlineCandlestickDataIntervalEnum["INTERVAL_1m"].value,
-        limit=2,
-    )
-    klines = response.data()
-    k = klines[-2] if len(klines) >= 2 else klines[-1]
-    return {
-        "ts": datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc),
-        "symbol": symbol,
-        "exchange": EXCHANGE,
-        "open": float(k[1]),
-        "high": float(k[2]),
-        "low": float(k[3]),
-        "close": float(k[4]),
-        "volume": float(k[5]),
-    }
+    """Most recent *closed* 1m kline, from the cached kline_1m WebSocket
+    stream (see MarketDataListener) — no REST call involved."""
+    if _latest_closed_candle is None:
+        raise BinanceStreamNotReadyError("kline stream not ready yet")
+    candle = dict(_latest_closed_candle)
+    candle["symbol"] = symbol
+    candle["exchange"] = EXCHANGE
+    return candle
 
 
 def fetch_futures_snapshot(symbol: str = SYMBOL) -> dict:
-    """Open interest + funding/mark/index, merged into one snapshot row."""
-    client = _get_rest_client().rest_api
-    oi = _guarded(client.open_interest, symbol=symbol).data()
-    mark = _guarded(client.mark_price, symbol=symbol).data().actual_instance
+    """Open interest (REST — no public push stream exists for it) merged
+    with funding/mark/index price from the cached markPrice WebSocket
+    stream (see MarketDataListener)."""
+    if _latest_mark_price is None:
+        raise BinanceStreamNotReadyError("mark price stream not ready yet")
+    oi = _guarded(_get_rest_client().rest_api.open_interest, symbol=symbol).data()
 
     return {
         "ts": datetime.now(tz=timezone.utc),
         "symbol": symbol,
         "exchange": EXCHANGE,
         "open_interest": float(oi.open_interest),
-        "funding_rate": float(mark.last_funding_rate),
-        "mark_price": float(mark.mark_price),
-        "index_price": float(mark.index_price),
+        "funding_rate": _latest_mark_price["funding_rate"],
+        "mark_price": _latest_mark_price["mark_price"],
+        "index_price": _latest_mark_price["index_price"],
     }
 
 
@@ -164,6 +165,62 @@ class LiquidationListener:
         self._connection = await _get_ws_client().websocket_streams.create_connection()
         stream = await self._connection.liquidation_order_streams(symbol=self._symbol)
         stream.on("message", self._handle_message)
+
+    async def stop(self) -> None:
+        if self._connection:
+            await self._connection.close_connection(close_session=True)
+
+
+class MarketDataListener:
+    """Subscribes to the markPrice and kline_1m WebSocket streams and caches
+    the latest values in module state (_latest_mark_price / _latest_closed_
+    candle), so fetch_futures_snapshot/fetch_last_closed_1m_candle can read
+    them without REST calls — REST polling of these is what triggered
+    Binance's IP ban (-1003) in the first place."""
+
+    def __init__(self, symbol: str = SYMBOL):
+        self._symbol = symbol.lower()
+        self._connection = None
+
+    def _handle_mark_price(self, data) -> None:
+        global _latest_mark_price
+        try:
+            _latest_mark_price = {
+                "mark_price": float(data.p),
+                "index_price": float(data.i),
+                "funding_rate": float(data.r),
+            }
+        except Exception:
+            logger.exception("failed to parse mark price message: %s", data)
+
+    def _handle_kline(self, data) -> None:
+        global _latest_closed_candle
+        try:
+            k = data.k
+            if not k.x:  # still-forming candle — only cache once closed
+                return
+            _latest_closed_candle = {
+                "ts": datetime.fromtimestamp(k.t / 1000, tz=timezone.utc),
+                "open": float(k.o),
+                "high": float(k.h),
+                "low": float(k.l),
+                "close": float(k.c),
+                "volume": float(k.v),
+            }
+        except Exception:
+            logger.exception("failed to parse kline message: %s", data)
+
+    async def start(self) -> None:
+        self._connection = await _get_ws_client().websocket_streams.create_connection()
+
+        mark_price_stream = await self._connection.mark_price_stream(symbol=self._symbol)
+        mark_price_stream.on("message", self._handle_mark_price)
+
+        kline_stream = await self._connection.kline_candlestick_streams(
+            symbol=self._symbol,
+            interval=KlineCandlestickStreamsIntervalEnum["INTERVAL_1m"].value,
+        )
+        kline_stream.on("message", self._handle_kline)
 
     async def stop(self) -> None:
         if self._connection:

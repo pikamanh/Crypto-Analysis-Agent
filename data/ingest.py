@@ -21,7 +21,7 @@ load_dotenv()
 
 from data.db import init_db, insert_rows  # noqa: E402
 from data.sources import binance, deribit  # noqa: E402
-from data.sources.binance import BinanceBannedError  # noqa: E402
+from data.sources.binance import BinanceBannedError, BinanceStreamNotReadyError  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def poll_ohlcv_futures() -> None:
     try:
         candle = binance.fetch_last_closed_1m_candle()
         insert_rows("raw_ohlcv", OHLCV_COLUMNS, [_row_values(candle, OHLCV_COLUMNS)])
-    except BinanceBannedError as exc:
+    except BinanceStreamNotReadyError as exc:
         logger.info("OHLCV poll skipped: %s", exc)
     except Exception:
         logger.exception("OHLCV poll failed")
@@ -54,7 +54,7 @@ def poll_ohlcv_futures() -> None:
     try:
         futures = binance.fetch_futures_snapshot()
         insert_rows("raw_futures_snapshot", FUTURES_COLUMNS, [_row_values(futures, FUTURES_COLUMNS)])
-    except BinanceBannedError as exc:
+    except (BinanceBannedError, BinanceStreamNotReadyError) as exc:
         logger.info("futures snapshot poll skipped: %s", exc)
     except Exception:
         logger.exception("futures snapshot poll failed")
@@ -103,6 +103,10 @@ async def main() -> None:
     listener = binance.LiquidationListener(on_event=on_liquidation)
     await listener.start()
 
+    logger.info("starting market data listener (markPrice + kline_1m streams)")
+    market_data = binance.MarketDataListener()
+    await market_data.start()
+
     try:
         logger.info(
             "starting poll loop (ohlcv/futures every %ds, options chain every %ds)",
@@ -111,6 +115,7 @@ async def main() -> None:
         await poll_loop()
     finally:
         await listener.stop()
+        await market_data.stop()
 
 
 if __name__ == "__main__":
