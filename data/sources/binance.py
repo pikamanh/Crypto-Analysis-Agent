@@ -52,6 +52,7 @@ class BinanceStreamNotReadyError(Exception):
 # since REST polling of these was what triggered Binance's IP ban (-1003).
 _latest_mark_price: Optional[dict] = None
 _latest_closed_candle: Optional[dict] = None
+_latest_open_interest: Optional[float] = None
 
 
 def _is_banned() -> bool:
@@ -119,16 +120,28 @@ def fetch_last_closed_1m_candle(symbol: str = SYMBOL) -> dict:
 def fetch_futures_snapshot(symbol: str = SYMBOL) -> dict:
     """Open interest (REST — no public push stream exists for it) merged
     with funding/mark/index price from the cached markPrice WebSocket
-    stream (see MarketDataListener)."""
+    stream (see MarketDataListener).
+
+    Open interest changes slowly, so if the REST call is banned/fails we
+    fall back to the last known value instead of dropping the whole row —
+    mark/funding/index still come fresh off the WS stream either way."""
+    global _latest_open_interest
     if _latest_mark_price is None:
         raise BinanceStreamNotReadyError("mark price stream not ready yet")
-    oi = _guarded(_get_rest_client().rest_api.open_interest, symbol=symbol).data()
+
+    try:
+        oi = _guarded(_get_rest_client().rest_api.open_interest, symbol=symbol).data()
+        _latest_open_interest = float(oi.open_interest)
+    except (BinanceBannedError, RateLimitBanError):
+        if _latest_open_interest is None:
+            raise BinanceStreamNotReadyError("open interest not fetched yet") from None
+        logger.info("open interest REST call unavailable — reusing last known value")
 
     return {
         "ts": datetime.now(tz=timezone.utc),
         "symbol": symbol,
         "exchange": EXCHANGE,
-        "open_interest": float(oi.open_interest),
+        "open_interest": _latest_open_interest,
         "funding_rate": _latest_mark_price["funding_rate"],
         "mark_price": _latest_mark_price["mark_price"],
         "index_price": _latest_mark_price["index_price"],
