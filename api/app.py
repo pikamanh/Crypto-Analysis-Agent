@@ -26,6 +26,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Crypto Options Dashboard API", version="1.0.0")
 
 _liquidation_listener = None
+_market_data_listener = None
 _ingest_task: asyncio.Task | None = None
 
 
@@ -35,20 +36,22 @@ async def start_ingest() -> None:
     doesn't need a separate (paid) Render Background Worker — it rides on
     this service's own uptime instead. Only starts if DATABASE_URL is set,
     so local/dashboard-only runs aren't forced to have a database."""
-    global _liquidation_listener, _ingest_task
+    global _liquidation_listener, _market_data_listener, _ingest_task
     if not os.environ.get("DATABASE_URL"):
         logger.info("DATABASE_URL not set — skipping data ingest, dashboard only.")
         return
 
     from data.db import init_db
     from data.ingest import poll_loop, on_liquidation
-    from data.sources.binance import LiquidationListener
+    from data.sources.binance import LiquidationListener, MarketDataListener
 
     init_db()
     _liquidation_listener = LiquidationListener(on_event=on_liquidation)
     await _liquidation_listener.start()
+    _market_data_listener = MarketDataListener()
+    await _market_data_listener.start()
     _ingest_task = asyncio.create_task(poll_loop())
-    logger.info("data ingest started (poll loop + liquidation listener)")
+    logger.info("data ingest started (poll loop + liquidation listener + market data listener)")
 
 
 @app.on_event("shutdown")
@@ -57,6 +60,8 @@ async def stop_ingest() -> None:
         _ingest_task.cancel()
     if _liquidation_listener:
         await _liquidation_listener.stop()
+    if _market_data_listener:
+        await _market_data_listener.stop()
 
 
 @app.get("/", include_in_schema=False)
