@@ -4,7 +4,9 @@ TimescaleDB.
 
 Three cadences, run together:
   - OHLCV + futures snapshot poll every OHLCV_FUTURES_INTERVAL_SECONDS
-  - options GEX feature snapshot poll every OPTIONS_CHAIN_INTERVAL_SECONDS
+  - options GEX feature snapshot poll every OPTIONS_CHAIN_INTERVAL_SECONDS —
+    same 60s cadence as OHLCV/futures now that this writes one derived row
+    per poll instead of the full per-strike chain
   - liquidation websocket listener, subscribed once and kept open for the
     process lifetime (event-driven — there's no REST equivalent to poll)
 
@@ -28,7 +30,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 OHLCV_FUTURES_INTERVAL_SECONDS = 60
-OPTIONS_CHAIN_INTERVAL_SECONDS = 5 * 60
+OPTIONS_CHAIN_INTERVAL_SECONDS = 60
 
 OHLCV_COLUMNS = ["ts", "symbol", "exchange", "open", "high", "low", "close", "volume"]
 FUTURES_COLUMNS = ["ts", "symbol", "exchange", "open_interest", "funding_rate", "mark_price", "index_price"]
