@@ -1,9 +1,10 @@
-"""Raw-data ingest loop: writes to the 4 raw_* tables in TimescaleDB.
+"""Ingest loop: writes to raw_ohlcv, raw_futures_snapshot, raw_liquidations,
+and feature_gex_snapshot (derived GEX/key levels, not raw chain data) in
+TimescaleDB.
 
 Three cadences, run together:
   - OHLCV + futures snapshot poll every OHLCV_FUTURES_INTERVAL_SECONDS
-  - options chain poll every OPTIONS_CHAIN_INTERVAL_SECONDS (much larger
-    payload per snapshot — kept slower to stay within storage limits)
+  - options GEX feature snapshot poll every OPTIONS_CHAIN_INTERVAL_SECONDS
   - liquidation websocket listener, subscribed once and kept open for the
     process lifetime (event-driven — there's no REST equivalent to poll)
 
@@ -32,8 +33,10 @@ OPTIONS_CHAIN_INTERVAL_SECONDS = 5 * 60
 OHLCV_COLUMNS = ["ts", "symbol", "exchange", "open", "high", "low", "close", "volume"]
 FUTURES_COLUMNS = ["ts", "symbol", "exchange", "open_interest", "funding_rate", "mark_price", "index_price"]
 OPTIONS_COLUMNS = [
-    "ts", "symbol", "exchange", "expiry", "strike", "option_type",
-    "open_interest", "volume", "mark_iv", "mark_price", "underlying_price",
+    "ts", "symbol", "exchange", "spot_price", "call_resistance", "put_support",
+    "hvl", "day_max", "day_min", "iv", "hv", "iv_rank",
+    *[f"gex_strike_{i}" for i in range(1, 11)],
+    *[f"gex_net_{i}" for i in range(1, 11)],
 ]
 LIQUIDATION_COLUMNS = ["ts", "symbol", "exchange", "side", "price", "size"]
 
@@ -42,15 +45,19 @@ def _row_values(row: dict, columns: list[str]) -> tuple:
     return tuple(row[c] for c in columns)
 
 
-def poll_ohlcv_futures() -> None:
+def on_candle_closed(candle: dict) -> None:
+    """Inserted straight from the kline_1m WebSocket callback (see
+    MarketDataListener) instead of the poll loop, so a closed candle lands
+    in the DB within milliseconds rather than waiting up to a minute for
+    the next futures-snapshot poll tick."""
     try:
-        candle = binance.fetch_last_closed_1m_candle()
+        candle = dict(candle, symbol=binance.SYMBOL, exchange=binance.EXCHANGE)
         insert_rows("raw_ohlcv", OHLCV_COLUMNS, [_row_values(candle, OHLCV_COLUMNS)])
-    except BinanceStreamNotReadyError as exc:
-        logger.info("OHLCV poll skipped: %s", exc)
     except Exception:
-        logger.exception("OHLCV poll failed")
+        logger.exception("failed to insert OHLCV candle")
 
+
+def poll_futures_snapshot() -> None:
     try:
         futures = binance.fetch_futures_snapshot()
         insert_rows("raw_futures_snapshot", FUTURES_COLUMNS, [_row_values(futures, FUTURES_COLUMNS)])
@@ -62,11 +69,14 @@ def poll_ohlcv_futures() -> None:
 
 def poll_options_chain() -> None:
     try:
-        chain_rows = deribit.fetch_raw_chain_rows()
-        n = insert_rows("raw_options_chain", OPTIONS_COLUMNS, [_row_values(r, OPTIONS_COLUMNS) for r in chain_rows])
-        logger.info("ingested %d options chain rows", n)
+        rows = deribit.fetch_feature_snapshot_rows()
+        n = insert_rows(
+            "feature_gex_snapshot", OPTIONS_COLUMNS,
+            [_row_values(r, OPTIONS_COLUMNS) for r in rows],
+        )
+        logger.info("ingested %d GEX feature snapshot rows", n)
     except Exception:
-        logger.exception("options chain poll failed")
+        logger.exception("options feature snapshot poll failed")
 
 
 def on_liquidation(row: dict) -> None:
@@ -90,7 +100,7 @@ async def _run_on_interval(fn, interval_seconds: float) -> None:
 async def poll_loop() -> None:
     """Runs both polling cadences concurrently for the life of the process."""
     await asyncio.gather(
-        _run_on_interval(poll_ohlcv_futures, OHLCV_FUTURES_INTERVAL_SECONDS),
+        _run_on_interval(poll_futures_snapshot, OHLCV_FUTURES_INTERVAL_SECONDS),
         _run_on_interval(poll_options_chain, OPTIONS_CHAIN_INTERVAL_SECONDS),
     )
 
@@ -104,12 +114,12 @@ async def main() -> None:
     await listener.start()
 
     logger.info("starting market data listener (markPrice + kline_1m streams)")
-    market_data = binance.MarketDataListener()
+    market_data = binance.MarketDataListener(on_candle_closed=on_candle_closed)
     await market_data.start()
 
     try:
         logger.info(
-            "starting poll loop (ohlcv/futures every %ds, options chain every %ds)",
+            "starting poll loop (futures snapshot every %ds, options chain every %ds)",
             OHLCV_FUTURES_INTERVAL_SECONDS, OPTIONS_CHAIN_INTERVAL_SECONDS,
         )
         await poll_loop()

@@ -30,21 +30,47 @@ CREATE TABLE IF NOT EXISTS raw_futures_snapshot (
 );
 SELECT create_hypertable('raw_futures_snapshot', 'ts', if_not_exists => TRUE);
 
-CREATE TABLE IF NOT EXISTS raw_options_chain (
-    ts                  TIMESTAMPTZ NOT NULL,
-    symbol              TEXT NOT NULL,
-    exchange            TEXT NOT NULL,
-    expiry              DATE NOT NULL,
-    strike              NUMERIC NOT NULL,
-    option_type         TEXT NOT NULL,  -- 'call' | 'put'
-    open_interest       NUMERIC NOT NULL,
-    volume              NUMERIC,
-    mark_iv             NUMERIC,        -- percent, as published by exchange
-    mark_price          NUMERIC,        -- option premium
-    underlying_price    NUMERIC NOT NULL,
-    PRIMARY KEY (ts, exchange, expiry, strike, option_type)
+-- Not raw: one row per poll instead of one per strike/expiry/type. The full
+-- per-instrument chain isn't persisted (nothing reads it back — the live
+-- dashboard recomputes straight from Deribit), so only the derived GEX/key
+-- levels are kept here to stay within the DB storage cap.
+CREATE TABLE IF NOT EXISTS feature_gex_snapshot (
+    ts                      TIMESTAMPTZ NOT NULL,
+    symbol                  TEXT NOT NULL,
+    exchange                TEXT NOT NULL,
+    spot_price              NUMERIC NOT NULL,
+    call_resistance         NUMERIC,
+    put_support             NUMERIC,
+    hvl                     NUMERIC,        -- gamma flip level
+    day_max                 NUMERIC,
+    day_min                 NUMERIC,
+    iv                      NUMERIC,        -- implied volatility, 30d, percent
+    hv                      NUMERIC,        -- historical volatility, 30d, percent
+    iv_rank                 NUMERIC,        -- percent
+    -- Top 10 strikes ranked by |net GEX|, most significant first.
+    gex_strike_1            NUMERIC,
+    gex_net_1               NUMERIC,
+    gex_strike_2            NUMERIC,
+    gex_net_2               NUMERIC,
+    gex_strike_3            NUMERIC,
+    gex_net_3               NUMERIC,
+    gex_strike_4            NUMERIC,
+    gex_net_4               NUMERIC,
+    gex_strike_5            NUMERIC,
+    gex_net_5               NUMERIC,
+    gex_strike_6            NUMERIC,
+    gex_net_6               NUMERIC,
+    gex_strike_7            NUMERIC,
+    gex_net_7               NUMERIC,
+    gex_strike_8            NUMERIC,
+    gex_net_8               NUMERIC,
+    gex_strike_9            NUMERIC,
+    gex_net_9               NUMERIC,
+    gex_strike_10           NUMERIC,
+    gex_net_10              NUMERIC,
+    PRIMARY KEY (ts, symbol, exchange)
 );
-SELECT create_hypertable('raw_options_chain', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('feature_gex_snapshot', 'ts', if_not_exists => TRUE);
 
 CREATE TABLE IF NOT EXISTS raw_liquidations (
     ts          TIMESTAMPTZ NOT NULL,

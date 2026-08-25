@@ -1,9 +1,12 @@
-"""Weekly backup: pg_dump the raw_* tables to Google Drive, then truncate
+"""Daily backup: pg_dump the raw_* tables to Google Drive, then truncate
 them to stay under the Aiven free-tier storage cap.
 
 Order matters: dump -> upload -> verify upload succeeded -> only then
 truncate. If any step before the truncate fails, nothing is deleted — the
 raw tables are left as-is and the job exits non-zero.
+
+Scheduled by .github/workflows/weekly-db-backup.yml (GitHub Actions cron —
+independent of whether the Render web service is awake).
 
 Run: python -m data.backup
 """
@@ -27,7 +30,7 @@ from data.drive import get_file_size, upload_file  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-RAW_TABLES = ["raw_ohlcv", "raw_futures_snapshot", "raw_options_chain", "raw_liquidations"]
+RAW_TABLES = ["raw_ohlcv", "raw_futures_snapshot", "feature_gex_snapshot", "raw_liquidations"]
 DUMP_DIR = Path(os.getenv("BACKUP_DUMP_DIR", "/tmp"))
 
 

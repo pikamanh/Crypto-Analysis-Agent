@@ -24,6 +24,32 @@ def init_db() -> None:
     conn.close()
 
 
+def fetch_ohlcv(symbol: str, exchange: str, hours: int) -> list[dict]:
+    """Closed 1m candles for `symbol`/`exchange` from the last `hours` hours,
+    oldest first."""
+    query = """
+        SELECT ts, open, high, low, close, volume
+        FROM raw_ohlcv
+        WHERE symbol = %s AND exchange = %s AND ts >= now() - (%s || ' hours')::interval
+        ORDER BY ts ASC
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(query, (symbol, exchange, hours))
+        rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "ts": ts.isoformat(),
+            "open": float(o),
+            "high": float(h),
+            "low": float(l),
+            "close": float(c),
+            "volume": float(v),
+        }
+        for ts, o, h, l, c, v in rows
+    ]
+
+
 def insert_rows(
     table: str,
     columns: Sequence[str],

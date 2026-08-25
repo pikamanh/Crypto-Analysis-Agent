@@ -35,20 +35,24 @@ async def start_ingest() -> None:
     """Runs the raw-data ingest loop inside this same web process so it
     doesn't need a separate (paid) Render Background Worker — it rides on
     this service's own uptime instead. Only starts if DATABASE_URL is set,
-    so local/dashboard-only runs aren't forced to have a database."""
+    so local/dashboard-only runs aren't forced to have a database.
+
+    Backups run on a schedule that doesn't depend on this process's uptime —
+    see .github/workflows/weekly-db-backup.yml, not an in-process task,
+    since a free-tier Render web service sleeps when idle."""
     global _liquidation_listener, _market_data_listener, _ingest_task
     if not os.environ.get("DATABASE_URL"):
         logger.info("DATABASE_URL not set — skipping data ingest, dashboard only.")
         return
 
     from data.db import init_db
-    from data.ingest import poll_loop, on_liquidation
+    from data.ingest import poll_loop, on_liquidation, on_candle_closed
     from data.sources.binance import LiquidationListener, MarketDataListener
 
     init_db()
     _liquidation_listener = LiquidationListener(on_event=on_liquidation)
     await _liquidation_listener.start()
-    _market_data_listener = MarketDataListener()
+    _market_data_listener = MarketDataListener(on_candle_closed=on_candle_closed)
     await _market_data_listener.start()
     _ingest_task = asyncio.create_task(poll_loop())
     logger.info("data ingest started (poll loop + liquidation listener + market data listener)")
@@ -76,6 +80,22 @@ def options_dashboard() -> dict:
     except Exception as exc:
         logger.exception("Failed to build BTC options dashboard.")
         raise HTTPException(status_code=502, detail=f"Upstream options data unavailable: {exc}")
+
+
+@app.get("/api/price/history", include_in_schema=False)
+def price_history(hours: int = 24) -> dict:
+    if not os.environ.get("DATABASE_URL"):
+        raise HTTPException(status_code=502, detail="Price history unavailable: DATABASE_URL not set.")
+
+    from data.db import fetch_ohlcv
+    from data.sources.binance import EXCHANGE, SYMBOL
+
+    try:
+        candles = fetch_ohlcv(SYMBOL, EXCHANGE, hours=min(max(hours, 1), 168))
+        return {"symbol": SYMBOL, "exchange": EXCHANGE, "candles": candles}
+    except Exception as exc:
+        logger.exception("Failed to fetch OHLCV price history.")
+        raise HTTPException(status_code=502, detail=f"Price history unavailable: {exc}")
 
 
 @app.get("/api/options/interpretation", include_in_schema=False)

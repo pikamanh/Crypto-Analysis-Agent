@@ -191,7 +191,8 @@ class MarketDataListener:
     them without REST calls — REST polling of these is what triggered
     Binance's IP ban (-1003) in the first place."""
 
-    def __init__(self, symbol: str = SYMBOL):
+    def __init__(self, on_candle_closed: Optional[Callable[[dict], None]] = None, symbol: str = SYMBOL):
+        self._on_candle_closed = on_candle_closed
         self._symbol = symbol.lower()
         self._connection = None
 
@@ -220,6 +221,8 @@ class MarketDataListener:
                 "close": float(k.c),
                 "volume": float(k.v),
             }
+            if self._on_candle_closed:
+                self._on_candle_closed(dict(_latest_closed_candle))
         except Exception:
             logger.exception("failed to parse kline message: %s", data)
 

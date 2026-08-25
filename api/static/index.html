@@ -275,6 +275,28 @@
         </div>
       </section>
 
+      <!-- 1a. BTC PRICE with CR / PS / HVL overlay -->
+      <section>
+        <p class="section-title">BTC Price</p>
+        <div class="big-card">
+          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+            <div>
+              <h2>BTC/USDT — LAST 24H</h2>
+              <div class="chart-sub">1m close price (Binance futures), with key options-derived levels overlaid.</div>
+            </div>
+          </div>
+          <div class="legend">
+            <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance (CR) <b id="price-lvl-call-res"></b></span>
+            <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support (PS) <b id="price-lvl-put-sup"></b></span>
+            <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="price-lvl-hvl"></b></span>
+          </div>
+          <div class="chart-wrap">
+            <canvas class="chart" id="price-chart" height="360"></canvas>
+            <div class="chart-tooltip" id="price-tooltip"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- 1b. GEX LEVEL (top 10 by absolute GEX) -->
       <section>
         <p class="section-title">GEX Level</p>
@@ -418,6 +440,7 @@
 
   var REFRESH_MS = 30000;
   var latest = null;
+  var priceCandles = null;
   var pollTimer = null;
 
   var el = {
@@ -428,6 +451,8 @@
     content: document.getElementById("dashboard-content"),
     keyLevelsGrid: document.getElementById("key-levels-grid"),
     settlementCountdown: document.getElementById("settlement-countdown"),
+    priceChart: document.getElementById("price-chart"),
+    priceTooltip: document.getElementById("price-tooltip"),
     gexLevelBody: document.getElementById("gex-level-body"),
     positioningCard: document.getElementById("positioning-card"),
     levelsCard: document.getElementById("levels-card"),
@@ -745,6 +770,119 @@
         tooltipEl.innerHTML = textFn(hit);
         tooltipEl.style.left = Math.min(mx + 14, rect.width - 150) + "px";
         tooltipEl.style.top = Math.max(my - 10, 0) + "px";
+        tooltipEl.classList.add("show");
+      } else {
+        tooltipEl.classList.remove("show");
+      }
+    };
+    canvas.onmouseleave = function () { tooltipEl.classList.remove("show"); };
+  }
+
+  // ---------------------------------------------------------------------
+  // BTC price over time, with CR / PS / HVL reference lines
+  // ---------------------------------------------------------------------
+  function drawPriceChart(canvas, tooltipEl, candles, levels) {
+    var dpr = window.devicePixelRatio || 1;
+    var cssWidth = canvas.parentElement.clientWidth;
+    var cssHeight = 360;
+    canvas.style.width = cssWidth + "px";
+    canvas.style.height = cssHeight + "px";
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    if (!candles || !candles.length) {
+      ctx.fillStyle = "#5b6472";
+      ctx.font = "12px " + getMonoFont();
+      ctx.textAlign = "center";
+      ctx.fillText("No price history available", cssWidth / 2, cssHeight / 2);
+      return;
+    }
+
+    var padL = 74, padR = 24, padT = 12, padB = 26;
+    var plotW = cssWidth - padL - padR;
+    var plotH = cssHeight - padT - padB;
+
+    var prices = candles.map(function (c) { return c.close; });
+    var levelVals = [levels.call_resistance, levels.put_support, levels.hvl].filter(function (v) { return v !== null && v !== undefined; });
+    var lo = Math.min.apply(null, prices.concat(levelVals));
+    var hi = Math.max.apply(null, prices.concat(levelVals));
+    var pad = (hi - lo) * 0.08 || hi * 0.01 || 1;
+    lo -= pad; hi += pad;
+
+    function xAt(i) { return padL + (i / Math.max(candles.length - 1, 1)) * plotW; }
+    function yAt(p) { return padT + (1 - (p - lo) / (hi - lo)) * plotH; }
+
+    ctx.strokeStyle = "#1b212a";
+    ctx.lineWidth = 1;
+    ctx.font = "10px " + getMonoFont();
+    ctx.fillStyle = "#5b6472";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    var gridLines = 4;
+    for (var g = 0; g <= gridLines; g++) {
+      var p = lo + (hi - lo) * (g / gridLines);
+      var y = yAt(p);
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
+      ctx.fillText(fmtUsd0(p), padL - 8, y);
+    }
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    var tickCount = Math.min(6, candles.length);
+    for (var t = 0; t < tickCount; t++) {
+      var idx = Math.round((t / Math.max(tickCount - 1, 1)) * (candles.length - 1));
+      var d = new Date(candles[idx].ts);
+      ctx.fillText(
+        String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"),
+        xAt(idx), cssHeight - padB + 6
+      );
+    }
+
+    ctx.strokeStyle = "#5b8def";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    candles.forEach(function (c, i) {
+      var x = xAt(i), y = yAt(c.close);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    function hline(val, color) {
+      if (val === null || val === undefined || val < lo || val > hi) return;
+      var y = yAt(val);
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.setLineDash([6, 3]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
+      ctx.restore();
+    }
+    hline(levels.call_resistance, "#d6483f");
+    hline(levels.put_support, "#1fa37b");
+    hline(levels.hvl, "#e0c526");
+
+    setLevelLabel("price-lvl-call-res", levels.call_resistance);
+    setLevelLabel("price-lvl-put-sup", levels.put_support);
+    setLevelLabel("price-lvl-hvl", levels.hvl);
+
+    var points = candles.map(function (c, i) { return { x: xAt(i), y: yAt(c.close), candle: c }; });
+    canvas.onmousemove = function (e) {
+      var rect = canvas.getBoundingClientRect();
+      var mx = e.clientX - rect.left;
+      var nearest = null, bestDist = Infinity;
+      points.forEach(function (pt) {
+        var dist = Math.abs(pt.x - mx);
+        if (dist < bestDist) { bestDist = dist; nearest = pt; }
+      });
+      if (nearest && bestDist < 20) {
+        var c = nearest.candle;
+        tooltipEl.innerHTML = '<div style="color:#fff">' + new Date(c.ts).toLocaleTimeString() + '</div>' +
+          '<div>Close: ' + fmtUsd0(c.close) + '</div>';
+        tooltipEl.style.left = Math.min(nearest.x + 14, rect.width - 150) + "px";
+        tooltipEl.style.top = Math.max(nearest.y - 30, 0) + "px";
         tooltipEl.classList.add("show");
       } else {
         tooltipEl.classList.remove("show");
@@ -1146,6 +1284,7 @@
     renderSettlementCountdown(d);
     renderGexLevels(d);
     redrawGexChart();
+    drawPriceChart(el.priceChart, el.priceTooltip, priceCandles, d.key_levels);
     drawOiChart(el.oiChart, el.oiTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
     renderExpirationStructure(d);
     renderOiConcentration(d);
@@ -1159,11 +1298,23 @@
     el.errBanner.classList.remove("show");
   }
 
+  async function refreshPriceHistory() {
+    try {
+      var res = await fetch("/api/price/history?hours=24");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      priceCandles = d.candles;
+    } catch (e) {
+      priceCandles = priceCandles || [];
+    }
+  }
+
   async function refresh() {
     try {
       var res = await fetch("/api/options/dashboard");
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
+      await refreshPriceHistory();
       renderAll(d);
     } catch (e) {
       el.connDot.classList.add("off");

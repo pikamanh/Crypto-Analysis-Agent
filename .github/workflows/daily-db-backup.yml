@@ -1,8 +1,8 @@
-name: Weekly DB backup
+name: Daily DB backup
 
 on:
   schedule:
-    - cron: "0 0 * * 0"  # every Sunday 00:00 UTC
+    - cron: "0 0 * * *"  # every day 00:00 UTC
   workflow_dispatch: {}
 
 jobs:
