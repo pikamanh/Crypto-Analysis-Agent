@@ -98,6 +98,27 @@ def price_history(hours: int = 24) -> dict:
         raise HTTPException(status_code=502, detail=f"Price history unavailable: {exc}")
 
 
+@app.get("/api/options/gex-profile-history", include_in_schema=False)
+def gex_profile_history(hours: int = 24) -> dict:
+    """Backs the GEX Interval Map's one-time backfill on page load — fills
+    in whatever the server ingested while no browser tab was open, since the
+    map's ongoing live updates are still accumulated client-side (see
+    accumulateGexSnapshot in index.html) to avoid re-fetching this every
+    poll tick."""
+    if not os.environ.get("DATABASE_URL"):
+        raise HTTPException(status_code=502, detail="GEX profile history unavailable: DATABASE_URL not set.")
+
+    from data.db import fetch_gex_profile_history
+    from data.sources.deribit import EXCHANGE, SYMBOL
+
+    try:
+        snapshots = fetch_gex_profile_history(SYMBOL, EXCHANGE, hours=min(max(hours, 1), 24))
+        return {"symbol": SYMBOL, "exchange": EXCHANGE, "snapshots": snapshots}
+    except Exception as exc:
+        logger.exception("Failed to fetch GEX profile history.")
+        raise HTTPException(status_code=502, detail=f"GEX profile history unavailable: {exc}")
+
+
 @app.get("/api/options/interpretation", include_in_schema=False)
 def options_interpretation() -> dict:
     # Lazy import: builds an OpenAI client at import time, which would crash

@@ -1,12 +1,13 @@
 """Ingest loop: writes to raw_ohlcv, raw_futures_snapshot, raw_liquidations,
-and feature_gex_snapshot (derived GEX/key levels, not raw chain data) in
-TimescaleDB.
+feature_gex_snapshot (derived GEX/key levels, top-10 by |GEX|), and
+feature_gex_profile_snapshot (full-chain GEX profile, JSONB, 24h retention)
+in TimescaleDB.
 
-Three cadences, run together:
+Two cadences, run together:
   - OHLCV + futures snapshot poll every OHLCV_FUTURES_INTERVAL_SECONDS
-  - options GEX feature snapshot poll every OPTIONS_CHAIN_INTERVAL_SECONDS —
-    same 60s cadence as OHLCV/futures now that this writes one derived row
-    per poll instead of the full per-strike chain
+  - options snapshot poll every OPTIONS_CHAIN_INTERVAL_SECONDS — one Deribit
+    fetch (deribit.fetch_snapshot_rows) feeds both feature_gex_snapshot and
+    feature_gex_profile_snapshot per tick
   - liquidation websocket listener, subscribed once and kept open for the
     process lifetime (event-driven — there's no REST equivalent to poll)
 
@@ -19,6 +20,7 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
+from psycopg2.extras import Json
 
 load_dotenv()
 
@@ -40,6 +42,7 @@ OPTIONS_COLUMNS = [
     *[f"gex_strike_{i}" for i in range(1, 11)],
     *[f"gex_net_{i}" for i in range(1, 11)],
 ]
+GEX_PROFILE_COLUMNS = ["ts", "symbol", "exchange", "spot_price", "profile"]
 LIQUIDATION_COLUMNS = ["ts", "symbol", "exchange", "side", "price", "size"]
 
 
@@ -69,16 +72,26 @@ def poll_futures_snapshot() -> None:
         logger.exception("futures snapshot poll failed")
 
 
-def poll_options_chain() -> None:
+def poll_options_snapshot() -> None:
+    """One Deribit REST call (deribit.fetch_snapshot_rows) feeds both
+    feature_gex_snapshot (top-10 by |GEX|, kept indefinitely) and
+    feature_gex_profile_snapshot (full chain, JSONB, 24h retention — backs
+    the GEX Interval Map) — combined so this costs one Deribit poll per
+    tick instead of two."""
     try:
-        rows = deribit.fetch_feature_snapshot_rows()
-        n = insert_rows(
+        feature_rows, profile_row = deribit.fetch_snapshot_rows()
+        n1 = insert_rows(
             "feature_gex_snapshot", OPTIONS_COLUMNS,
-            [_row_values(r, OPTIONS_COLUMNS) for r in rows],
+            [_row_values(r, OPTIONS_COLUMNS) for r in feature_rows],
         )
-        logger.info("ingested %d GEX feature snapshot rows", n)
+        profile_row = dict(profile_row, profile=Json(profile_row["profile"]))
+        n2 = insert_rows(
+            "feature_gex_profile_snapshot", GEX_PROFILE_COLUMNS,
+            [_row_values(profile_row, GEX_PROFILE_COLUMNS)],
+        )
+        logger.info("ingested %d GEX feature row(s), %d GEX profile row(s)", n1, n2)
     except Exception:
-        logger.exception("options feature snapshot poll failed")
+        logger.exception("options snapshot poll failed")
 
 
 def on_liquidation(row: dict) -> None:
@@ -103,7 +116,7 @@ async def poll_loop() -> None:
     """Runs both polling cadences concurrently for the life of the process."""
     await asyncio.gather(
         _run_on_interval(poll_futures_snapshot, OHLCV_FUTURES_INTERVAL_SECONDS),
-        _run_on_interval(poll_options_chain, OPTIONS_CHAIN_INTERVAL_SECONDS),
+        _run_on_interval(poll_options_snapshot, OPTIONS_CHAIN_INTERVAL_SECONDS),
     )
 
 

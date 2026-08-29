@@ -218,7 +218,6 @@
   .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 800px) { .compare-grid { grid-template-columns: 1fr; } }
   .compare-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
-  .compare-card.next { }
   .compare-card h3 { font-size: 12.5px; margin: 0 0 2px; }
   .compare-card .period { font-size: 10.5px; color: var(--text-dim); font-family: var(--font-mono); margin-bottom: 12px; }
   .compare-bar-row { margin-bottom: 10px; }
@@ -372,7 +371,7 @@
           <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
             <div>
               <h2>INTERVAL MAP (GEX) — BTC</h2>
-              <div class="chart-sub">Gamma exposure by strike over time, built live from each Deribit poll (session-only — resets on reload). Auto-scrolls to the latest time and auto-follows the 10 real strikes nearest spot. Marker size = |GEX|, color = sign. Scroll to zoom, drag to pan, double-click to reset (also re-enables auto-follow).</div>
+              <div class="chart-sub">Gamma exposure by strike over time, built live from each Deribit poll. Kept in this browser (localStorage) between visits, backfilled from the server's last 24h on load to cover any time the tab was closed. Auto-scrolls to the latest time and auto-follows the 10 real strikes nearest spot. Marker size = |GEX|, color = sign. Scroll to zoom, drag to pan, double-click to reset (also re-enables auto-follow).</div>
             </div>
             <select class="exp-select" id="interval-metric-select">
               <option value="net_gex">Net GEX</option>
@@ -489,12 +488,38 @@
   // response) — NOT from feature_gex_snapshot (that table only keeps the
   // top-10-by-|GEX| strikes for the separate GEX Level leaderboard). This
   // means the map only has history for strikes seen since the tab was
-  // opened, and resets on reload — a deliberate tradeoff for showing every
-  // active strike (not just the top 10) without touching the DB schema.
-  var liveGexHistory = [];
+  // opened — a deliberate tradeoff for showing every active strike (not
+  // just the top 10) without touching the DB schema. Persisted to this
+  // browser's localStorage (not the backend/DB) so it survives a reload —
+  // unaffected by Render restarts either way, since it never lived server-side.
   var GEX_HISTORY_RETENTION_MS = 6 * 60 * 60 * 1000; // keep last 6h client-side
+  var GEX_HISTORY_STORAGE_KEY = "btcOptionsDashboard.liveGexHistory.v1";
   var GEX_STRIKE_BAND_PCT = 0.20; // per snapshot, keep strikes within ±20% of spot
   var intervalMetric = "net_gex"; // net_gex | call_gex | put_gex — drives marker color/size
+
+  function loadGexHistoryFromStorage() {
+    try {
+      var raw = localStorage.getItem(GEX_HISTORY_STORAGE_KEY);
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      var cutoff = Date.now() - GEX_HISTORY_RETENTION_MS;
+      return parsed.filter(function (s) { return s && s.ts && new Date(s.ts).getTime() >= cutoff; });
+    } catch (e) {
+      return []; // private-mode/quota/corrupt storage — just start fresh
+    }
+  }
+
+  function saveGexHistoryToStorage() {
+    try {
+      localStorage.setItem(GEX_HISTORY_STORAGE_KEY, JSON.stringify(liveGexHistory));
+    } catch (e) {
+      // storage unavailable or over quota — history still works in-memory
+      // for this tab, it just won't survive a reload.
+    }
+  }
+
+  var liveGexHistory = loadGexHistoryFromStorage();
 
   // GEX Interval Map viewport (zoom/pan) state — kept across redraws/refreshes
   // so a user's zoom isn't reset every 30s poll. Reset (dblclick, or the
@@ -1953,6 +1978,30 @@
     el.errBanner.classList.remove("show");
   }
 
+  async function backfillGexHistoryFromDb() {
+    // One-time (not per-poll) fetch of whatever the server ingested into
+    // feature_gex_profile_snapshot while this browser tab was closed/not
+    // open — merged into liveGexHistory so reopening the tab later doesn't
+    // leave a gap for the time nobody was watching. Ongoing updates after
+    // this stay client-side (accumulateGexSnapshot) to avoid re-fetching
+    // the whole 24h history every 30s poll.
+    try {
+      var res = await fetch("/api/options/gex-profile-history?hours=24");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      var byTs = {};
+      liveGexHistory.forEach(function (s) { byTs[s.ts] = s; });
+      (d.snapshots || []).forEach(function (s) { byTs[s.ts] = s; });
+      liveGexHistory = Object.keys(byTs).sort().map(function (ts) { return byTs[ts]; });
+      var cutoff = Date.now() - GEX_HISTORY_RETENTION_MS;
+      liveGexHistory = liveGexHistory.filter(function (s) { return new Date(s.ts).getTime() >= cutoff; });
+      saveGexHistoryToStorage();
+    } catch (e) {
+      // DB-backed backfill unavailable (no DATABASE_URL, offline, etc.) —
+      // the client-side accumulator (+ localStorage) still works on its own.
+    }
+  }
+
   async function refreshPriceHistory() {
     try {
       var res = await fetch("/api/price/history?hours=24");
@@ -1968,7 +2017,9 @@
     // Builds the Interval Map's history entirely client-side from the live
     // full per-strike chain (d.net_gex_profile) — NOT from feature_gex_snapshot,
     // which only keeps the top-10-by-|GEX| strikes for the separate GEX Level
-    // leaderboard. Session-only: resets on reload, retained for GEX_HISTORY_RETENTION_MS.
+    // leaderboard. Persisted to this browser's localStorage (see
+    // saveGexHistoryToStorage) so it survives a reload, retained for
+    // GEX_HISTORY_RETENTION_MS either way.
     var spot = d.key_levels.spot_price;
     var profile = d.net_gex_profile || [];
     var lo = spot * (1 - GEX_STRIKE_BAND_PCT), hi = spot * (1 + GEX_STRIKE_BAND_PCT);
@@ -1981,6 +2032,7 @@
     while (liveGexHistory.length && new Date(liveGexHistory[0].ts).getTime() < cutoff) {
       liveGexHistory.shift();
     }
+    saveGexHistoryToStorage();
   }
 
   async function refresh() {
@@ -2005,7 +2057,7 @@
     resizeTimer = setTimeout(function () { if (latest) renderAll(latest); }, 200);
   });
 
-  refresh();
+  backfillGexHistoryFromDb().then(refresh);
   pollTimer = setInterval(refresh, REFRESH_MS);
 })();
 </script>

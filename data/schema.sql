@@ -72,6 +72,25 @@ CREATE TABLE IF NOT EXISTS feature_gex_snapshot (
 );
 SELECT create_hypertable('feature_gex_snapshot', 'ts', if_not_exists => TRUE);
 
+-- Full per-strike GEX profile (all strikes within ~20% of spot, aggregated
+-- across expiries), one row per poll with the profile packed into a JSONB
+-- column instead of one row per strike — keeps row count sane (~1440/day at
+-- the 60s poll cadence) while still capturing every active strike, not just
+-- the top 10. Powers the GEX Interval Map's continuous per-strike history;
+-- kept separate from feature_gex_snapshot (top-10 by |GEX|, kept
+-- indefinitely for the GEX Level leaderboard) — this table is pruned
+-- aggressively since it's the full chain, not just the top 10.
+CREATE TABLE IF NOT EXISTS feature_gex_profile_snapshot (
+    ts          TIMESTAMPTZ NOT NULL,
+    symbol      TEXT NOT NULL,
+    exchange    TEXT NOT NULL,
+    spot_price  NUMERIC NOT NULL,
+    profile     JSONB NOT NULL,  -- [{strike, net_gex, call_gex, put_gex}, ...]
+    PRIMARY KEY (ts, symbol, exchange)
+);
+SELECT create_hypertable('feature_gex_profile_snapshot', 'ts', if_not_exists => TRUE);
+SELECT add_retention_policy('feature_gex_profile_snapshot', INTERVAL '24 hours', if_not_exists => TRUE);
+
 CREATE TABLE IF NOT EXISTS raw_liquidations (
     ts          TIMESTAMPTZ NOT NULL,
     symbol      TEXT NOT NULL,

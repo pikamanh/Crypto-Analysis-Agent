@@ -50,6 +50,28 @@ def fetch_ohlcv(symbol: str, exchange: str, hours: int) -> list[dict]:
     ]
 
 
+def fetch_gex_profile_history(symbol: str, exchange: str, hours: int) -> list[dict]:
+    """Full-chain GEX profile snapshots (feature_gex_profile_snapshot, 24h
+    retention — NOT feature_gex_snapshot's top-10) from the last `hours`
+    hours, oldest first. Each row already carries its strikes as a JSONB
+    list (see deribit.fetch_gex_profile_snapshot_row), so this just reshapes
+    it to the {ts, spot_price, strikes} shape the GEX Interval Map expects."""
+    query = """
+        SELECT ts, spot_price, profile
+        FROM feature_gex_profile_snapshot
+        WHERE symbol = %s AND exchange = %s AND ts >= now() - (%s || ' hours')::interval
+        ORDER BY ts ASC
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(query, (symbol, exchange, hours))
+        rows = cur.fetchall()
+    conn.close()
+    return [
+        {"ts": ts.isoformat(), "spot_price": float(spot), "strikes": profile}
+        for ts, spot, profile in rows
+    ]
+
+
 def insert_rows(
     table: str,
     columns: Sequence[str],
