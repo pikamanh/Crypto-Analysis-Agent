@@ -348,7 +348,14 @@ def _aggregate_by_strike(rows: List[dict]) -> Dict[float, dict]:
 
 def _profile_series(strike_rows: Dict[float, dict]) -> List[dict]:
     return [
-        {"strike": k, "net_gex": v["net_gex"], "call_oi": v["call_oi"], "put_oi": v["put_oi"]}
+        {
+            "strike": k,
+            "net_gex": v["net_gex"],
+            "call_gex": v["call_gex"],
+            "put_gex": v["put_gex"],
+            "call_oi": v["call_oi"],
+            "put_oi": v["put_oi"],
+        }
         for k, v in sorted(strike_rows.items())
     ]
 

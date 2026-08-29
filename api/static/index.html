@@ -164,6 +164,10 @@
     font-family: var(--font-mono); font-size: 11.5px; padding: 5px 8px; border-radius: 6px;
   }
 
+  .range-slider-wrap { margin-top: 8px; }
+  canvas.range-slider { width: 100%; display: block; touch-action: none; }
+  .range-slider-hint { font-size: 10px; color: var(--text-dim); margin-top: 4px; text-align: center; }
+
   /* expiration structure 4-up */
   .exp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   @media (max-width: 1100px) { .exp-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -294,6 +298,10 @@
             <canvas class="chart" id="price-chart" height="360"></canvas>
             <div class="chart-tooltip" id="price-tooltip"></div>
           </div>
+          <div class="range-slider-wrap">
+            <canvas class="range-slider" id="price-range-slider"></canvas>
+            <div class="range-slider-hint">Drag edges to zoom, drag middle to pan</div>
+          </div>
         </div>
       </section>
 
@@ -353,6 +361,39 @@
           <div class="chart-wrap">
             <canvas class="chart" id="gex-chart" height="460"></canvas>
             <div class="chart-tooltip" id="gex-tooltip"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4b. GEX INTERVAL MAP -->
+      <section>
+        <p class="section-title">GEX Interval Map</p>
+        <div class="big-card">
+          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+            <div>
+              <h2>INTERVAL MAP (GEX) — BTC</h2>
+              <div class="chart-sub">Gamma exposure by strike over time, built live from each Deribit poll (session-only — resets on reload). Auto-scrolls to the latest time and auto-follows the 10 real strikes nearest spot. Marker size = |GEX|, color = sign. Scroll to zoom, drag to pan, double-click to reset (also re-enables auto-follow).</div>
+            </div>
+            <select class="exp-select" id="interval-metric-select">
+              <option value="net_gex">Net GEX</option>
+              <option value="call_gex">Call GEX</option>
+              <option value="put_gex">Put GEX</option>
+            </select>
+          </div>
+          <div class="legend">
+            <span><i class="swatch" style="background:var(--pos)"></i> Positive GEX</span>
+            <span><i class="swatch" style="background:var(--neg)"></i> Negative GEX</span>
+            <span><i class="swatch line" style="border-color:#3aa0ff"></i> BTC Price</span>
+            <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="interval-lvl-spot"></b></span>
+            <span><i class="swatch line" style="border-color:var(--yellow)"></i> Latest Time</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas class="chart" id="interval-chart" height="460"></canvas>
+            <div class="chart-tooltip" id="interval-tooltip"></div>
+          </div>
+          <div class="range-slider-wrap">
+            <canvas class="range-slider" id="interval-range-slider"></canvas>
+            <div class="range-slider-hint">Drag edges to zoom, drag middle to pan</div>
           </div>
         </div>
       </section>
@@ -443,6 +484,45 @@
   var priceCandles = null;
   var pollTimer = null;
 
+  // GEX Interval Map data: built client-side, one entry per poll, from the
+  // live full-chain Deribit fetch (`net_gex_profile` in the dashboard
+  // response) — NOT from feature_gex_snapshot (that table only keeps the
+  // top-10-by-|GEX| strikes for the separate GEX Level leaderboard). This
+  // means the map only has history for strikes seen since the tab was
+  // opened, and resets on reload — a deliberate tradeoff for showing every
+  // active strike (not just the top 10) without touching the DB schema.
+  var liveGexHistory = [];
+  var GEX_HISTORY_RETENTION_MS = 6 * 60 * 60 * 1000; // keep last 6h client-side
+  var GEX_STRIKE_BAND_PCT = 0.20; // per snapshot, keep strikes within ±20% of spot
+  var intervalMetric = "net_gex"; // net_gex | call_gex | put_gex — drives marker color/size
+
+  // GEX Interval Map viewport (zoom/pan) state — kept across redraws/refreshes
+  // so a user's zoom isn't reset every 30s poll. Reset (dblclick, or the
+  // range slider) to null defaults back to the last 30 minutes.
+  var INTERVAL_PAD = { L: 90, R: 24, T: 12, B: 30 };
+  var intervalView = null;
+  var intervalFullExtent = null;
+  var intervalPoints = [];
+  var intervalDrag = { active: false, startX: 0, startY: 0, startView: null };
+  var intervalSliderDraw = null;
+  // true once the user manually zooms (shift+wheel) or pans (drag) the strike
+  // axis — while false, the Y-axis auto-follows spot: every redraw re-centers
+  // on the 10 real strikes nearest the current price. Double-click resets to
+  // auto-follow.
+  var intervalYManual = false;
+  var INTERVAL_STRIKE_ROWS = 10;
+  // true once the user manually zooms/pans/drags the time axis (or moves the
+  // range slider) — while false, the right edge stays pinned to the newest
+  // snapshot so the map keeps scrolling forward on its own each poll.
+  var intervalXManual = false;
+
+  // BTC price chart viewport — same idea, also defaults to the last 30 min,
+  // and auto-scrolls to the latest candle until the slider is dragged.
+  var priceView = null;
+  var priceFullExtent = null;
+  var priceXManual = false;
+  var priceSliderDraw = null;
+
   var el = {
     connDot: document.getElementById("conn-dot"),
     metaBlock: document.getElementById("meta-block"),
@@ -461,6 +541,11 @@
     gexTooltip: document.getElementById("gex-tooltip"),
     oiChart: document.getElementById("oi-chart"),
     oiTooltip: document.getElementById("oi-tooltip"),
+    intervalChart: document.getElementById("interval-chart"),
+    intervalTooltip: document.getElementById("interval-tooltip"),
+    intervalRangeSlider: document.getElementById("interval-range-slider"),
+    intervalMetricSelect: document.getElementById("interval-metric-select"),
+    priceRangeSlider: document.getElementById("price-range-slider"),
     expStructureGrid: document.getElementById("exp-structure-grid"),
     callOiConc: document.getElementById("call-oi-conc"),
     putOiConc: document.getElementById("put-oi-conc"),
@@ -779,8 +864,158 @@
   }
 
   // ---------------------------------------------------------------------
+  // Reusable time-range slider (brush): a thin bar under a chart showing
+  // the full data extent, with a draggable window over it. Drag an edge to
+  // zoom, drag the middle to pan, click outside the window to jump there.
+  // `opts.getFull()`/`getView()` return {lo,hi} in epoch ms; `setView` is
+  // called with the new bounds, `onChange` re-renders the owning chart.
+  // ---------------------------------------------------------------------
+  function makeRangeSlider(canvas, opts) {
+    var dragMode = null; // 'left' | 'right' | 'move' | null
+    var dragStartPx = 0, dragStartView = null;
+
+    function draw() {
+      var dpr = window.devicePixelRatio || 1;
+      var cssWidth = canvas.parentElement.clientWidth;
+      var cssHeight = 26;
+      canvas.style.width = cssWidth + "px";
+      canvas.style.height = cssHeight + "px";
+      canvas.width = cssWidth * dpr;
+      canvas.height = cssHeight * dpr;
+      var ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+      var full = opts.getFull(), view = opts.getView();
+      canvas._sliderGeom = null;
+      if (!full || !view) return;
+      var span = (full.hi - full.lo) || 1;
+
+      ctx.fillStyle = "#171c24";
+      ctx.fillRect(0, 7, cssWidth, 12);
+      ctx.strokeStyle = "#232a35";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 7.5, cssWidth - 1, 11);
+
+      var x1 = Math.max(0, Math.min(cssWidth, (view.lo - full.lo) / span * cssWidth));
+      var x2 = Math.max(0, Math.min(cssWidth, (view.hi - full.lo) / span * cssWidth));
+      if (x2 - x1 < 3) x2 = x1 + 3;
+
+      ctx.fillStyle = "rgba(91,141,239,.28)";
+      ctx.fillRect(x1, 5, x2 - x1, 16);
+      ctx.strokeStyle = "#5b8def";
+      ctx.strokeRect(x1 + 0.5, 5.5, x2 - x1 - 1, 15);
+      ctx.fillStyle = "#5b8def";
+      ctx.fillRect(x1 - 2, 3, 4, 20);
+      ctx.fillRect(x2 - 2, 3, 4, 20);
+
+      canvas._sliderGeom = { x1: x1, x2: x2, width: cssWidth, full: full };
+    }
+
+    function timeAt(px) {
+      var g = canvas._sliderGeom;
+      if (!g) return 0;
+      return g.full.lo + (px / g.width) * (g.full.hi - g.full.lo);
+    }
+
+    if (!canvas.dataset.sliderWired) {
+      canvas.dataset.sliderWired = "1";
+
+      canvas.addEventListener("mousemove", function (e) {
+        if (dragMode) return;
+        var g = canvas._sliderGeom;
+        if (!g) return;
+        var rect = canvas.getBoundingClientRect();
+        var mx = e.clientX - rect.left;
+        if (Math.abs(mx - g.x1) < 6 || Math.abs(mx - g.x2) < 6) canvas.style.cursor = "ew-resize";
+        else if (mx > g.x1 && mx < g.x2) canvas.style.cursor = "grab";
+        else canvas.style.cursor = "pointer";
+      });
+
+      canvas.addEventListener("mousedown", function (e) {
+        var g = canvas._sliderGeom;
+        if (!g) return;
+        var rect = canvas.getBoundingClientRect();
+        var mx = e.clientX - rect.left;
+        var view = opts.getView();
+        if (!view) return;
+        if (Math.abs(mx - g.x1) < 6) dragMode = "left";
+        else if (Math.abs(mx - g.x2) < 6) dragMode = "right";
+        else if (mx > g.x1 && mx < g.x2) dragMode = "move";
+        else {
+          var full = opts.getFull();
+          var span = view.hi - view.lo;
+          var t = timeAt(mx);
+          var lo = t - span / 2, hi = t + span / 2;
+          if (lo < full.lo) { lo = full.lo; hi = full.lo + span; }
+          if (hi > full.hi) { hi = full.hi; lo = full.hi - span; }
+          opts.setView(lo, hi);
+          opts.onChange();
+          return;
+        }
+        dragStartPx = mx;
+        dragStartView = { lo: view.lo, hi: view.hi };
+        canvas.style.cursor = "grabbing";
+      });
+
+      window.addEventListener("mousemove", function (e) {
+        if (!dragMode) return;
+        var g = canvas._sliderGeom;
+        if (!g) return;
+        var rect = canvas.getBoundingClientRect();
+        var mx = e.clientX - rect.left;
+        var full = opts.getFull();
+        var minSpan = opts.minSpan || 60000;
+        var dt = timeAt(mx) - timeAt(dragStartPx);
+        var lo, hi;
+        if (dragMode === "left") {
+          lo = dragStartView.lo + dt; hi = dragStartView.hi;
+          if (hi - lo < minSpan) lo = hi - minSpan;
+          if (lo < full.lo) lo = full.lo;
+        } else if (dragMode === "right") {
+          lo = dragStartView.lo; hi = dragStartView.hi + dt;
+          if (hi - lo < minSpan) hi = lo + minSpan;
+          if (hi > full.hi) hi = full.hi;
+        } else {
+          var span = dragStartView.hi - dragStartView.lo;
+          lo = dragStartView.lo + dt; hi = dragStartView.hi + dt;
+          if (lo < full.lo) { lo = full.lo; hi = full.lo + span; }
+          if (hi > full.hi) { hi = full.hi; lo = full.hi - span; }
+        }
+        opts.setView(lo, hi);
+        opts.onChange();
+      });
+
+      window.addEventListener("mouseup", function () {
+        if (dragMode) { dragMode = null; canvas.style.cursor = "pointer"; }
+      });
+    }
+
+    return draw;
+  }
+
+  // ---------------------------------------------------------------------
   // BTC price over time, with CR / PS / HVL reference lines
   // ---------------------------------------------------------------------
+  function priceDataExtent(candles) {
+    var allTs = candles.map(function (c) { return new Date(c.ts).getTime(); });
+    var tLo = Math.min.apply(null, allTs), tHi = Math.max.apply(null, allTs);
+    var pad = (tHi - tLo) * 0.02 || 60000;
+    tLo -= pad; tHi += pad;
+    // Same floor as the Interval Map: keep the full extent at least 30
+    // minutes wide, padding *after* the latest candle rather than before
+    // the earliest one, so a sparse/short history doesn't stretch a
+    // handful of candles across the full chart width.
+    var minSpan = 30 * 60 * 1000;
+    if (tHi - tLo < minSpan) tHi = tLo + minSpan;
+    return { tLo: tLo, tHi: tHi };
+  }
+
+  function defaultPriceView(full) {
+    var span = Math.min(30 * 60 * 1000, full.tHi - full.tLo);
+    return { tLo: full.tHi - span, tHi: full.tHi };
+  }
+
   function drawPriceChart(canvas, tooltipEl, candles, levels) {
     var dpr = window.devicePixelRatio || 1;
     var cssWidth = canvas.parentElement.clientWidth;
@@ -801,18 +1036,46 @@
       return;
     }
 
+    priceFullExtent = priceDataExtent(candles);
+    if (!priceView) priceView = defaultPriceView(priceFullExtent);
+    else if (!priceXManual) {
+      // Auto-follow: keep the current zoom span but re-pin its right edge to
+      // the newest candle, so new polls scroll into view on their own.
+      var followSpan = priceView.tHi - priceView.tLo;
+      priceView = { tLo: priceFullExtent.tHi - followSpan, tHi: priceFullExtent.tHi };
+    } else {
+      var tSpan = priceView.tHi - priceView.tLo;
+      if (tSpan > priceFullExtent.tHi - priceFullExtent.tLo) priceView = { tLo: priceFullExtent.tLo, tHi: priceFullExtent.tHi };
+      else {
+        if (priceView.tLo < priceFullExtent.tLo) priceView = { tLo: priceFullExtent.tLo, tHi: priceFullExtent.tLo + tSpan };
+        if (priceView.tHi > priceFullExtent.tHi) priceView = { tLo: priceFullExtent.tHi - tSpan, tHi: priceFullExtent.tHi };
+      }
+    }
+
+    // Only the candles inside the slider's window are plotted — full array
+    // (`candles`) still backs the slider's background extent.
+    var visible = candles.filter(function (c) {
+      var t = new Date(c.ts).getTime();
+      return t >= priceView.tLo && t <= priceView.tHi;
+    });
+    if (!visible.length) visible = candles;
+
     var padL = 74, padR = 24, padT = 12, padB = 26;
     var plotW = cssWidth - padL - padR;
     var plotH = cssHeight - padT - padB;
 
-    var prices = candles.map(function (c) { return c.close; });
+    var prices = visible.map(function (c) { return c.close; });
     var levelVals = [levels.call_resistance, levels.put_support, levels.hvl].filter(function (v) { return v !== null && v !== undefined; });
     var lo = Math.min.apply(null, prices.concat(levelVals));
     var hi = Math.max.apply(null, prices.concat(levelVals));
     var pad = (hi - lo) * 0.08 || hi * 0.01 || 1;
     lo -= pad; hi += pad;
 
-    function xAt(i) { return padL + (i / Math.max(candles.length - 1, 1)) * plotW; }
+    // Time-based X mapping (like the Interval Map) so real gaps show as real
+    // gaps — e.g. the empty space priceDataExtent() pads in after the latest
+    // candle actually renders as empty space instead of being squeezed out
+    // by an index-based layout.
+    function xAt(t) { return padL + (t - priceView.tLo) / (priceView.tHi - priceView.tLo) * plotW; }
     function yAt(p) { return padT + (1 - (p - lo) / (hi - lo)) * plotH; }
 
     ctx.strokeStyle = "#1b212a";
@@ -821,9 +1084,15 @@
     ctx.fillStyle = "#5b6472";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    var gridLines = 4;
-    for (var g = 0; g <= gridLines; g++) {
-      var p = lo + (hi - lo) * (g / gridLines);
+    // Nice round-number price gridlines (like the Interval Map's real-strike
+    // rows) instead of raw quartile interpolation, with tick density scaled
+    // to the available plot height.
+    var targetTicks = Math.max(3, Math.round(plotH / 60));
+    var rawStep = (hi - lo) / targetTicks;
+    var mag = Math.pow(10, Math.floor(Math.log10(rawStep || 1)));
+    var norm = rawStep / mag;
+    var niceStep = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+    for (var p = Math.ceil(lo / niceStep) * niceStep; p <= hi; p += niceStep) {
       var y = yAt(p);
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
       ctx.fillText(fmtUsd0(p), padL - 8, y);
@@ -831,21 +1100,21 @@
 
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    var tickCount = Math.min(6, candles.length);
-    for (var t = 0; t < tickCount; t++) {
-      var idx = Math.round((t / Math.max(tickCount - 1, 1)) * (candles.length - 1));
-      var d = new Date(candles[idx].ts);
+    var tTicks = Math.min(8, Math.max(2, Math.round(plotW / 90)));
+    for (var tI = 0; tI <= tTicks; tI++) {
+      var tVal = priceView.tLo + (priceView.tHi - priceView.tLo) * (tI / tTicks);
+      var td = new Date(tVal);
       ctx.fillText(
-        String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"),
-        xAt(idx), cssHeight - padB + 6
+        String(td.getHours()).padStart(2, "0") + ":" + String(td.getMinutes()).padStart(2, "0"),
+        xAt(tVal), cssHeight - padB + 6
       );
     }
 
     ctx.strokeStyle = "#5b8def";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    candles.forEach(function (c, i) {
-      var x = xAt(i), y = yAt(c.close);
+    visible.forEach(function (c, i) {
+      var x = xAt(new Date(c.ts).getTime()), y = yAt(c.close);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
@@ -868,7 +1137,7 @@
     setLevelLabel("price-lvl-put-sup", levels.put_support);
     setLevelLabel("price-lvl-hvl", levels.hvl);
 
-    var points = candles.map(function (c, i) { return { x: xAt(i), y: yAt(c.close), candle: c }; });
+    var points = visible.map(function (c) { return { x: xAt(new Date(c.ts).getTime()), y: yAt(c.close), candle: c }; });
     canvas.onmousemove = function (e) {
       var rect = canvas.getBoundingClientRect();
       var mx = e.clientX - rect.left;
@@ -889,6 +1158,386 @@
       }
     };
     canvas.onmouseleave = function () { tooltipEl.classList.remove("show"); };
+    canvas.ondblclick = function () {
+      priceView = null;
+      priceXManual = false; // back to auto-scrolling to the latest candle
+      drawPriceChart(canvas, tooltipEl, candles, levels);
+    };
+
+    if (!priceSliderDraw) {
+      priceSliderDraw = makeRangeSlider(el.priceRangeSlider, {
+        getFull: function () { return priceFullExtent ? { lo: priceFullExtent.tLo, hi: priceFullExtent.tHi } : null; },
+        getView: function () { return priceView ? { lo: priceView.tLo, hi: priceView.tHi } : null; },
+        setView: function (lo, hi) { priceView.tLo = lo; priceView.tHi = hi; },
+        onChange: function () {
+          priceXManual = true; // explicit slider drag — stop auto-scrolling to latest
+          drawPriceChart(canvas, tooltipEl, candles, levels);
+        },
+        minSpan: 3 * 60 * 1000,
+      });
+    }
+    priceSliderDraw();
+  }
+
+  // ---------------------------------------------------------------------
+  // GEX Interval Map: time (X) x strike (Y) scatter of GEX-by-strike
+  // snapshots. Position = (timestamp, strike), color = sign(net GEX),
+  // radius = sqrt(|net GEX|) so a few outsized strikes don't swallow the
+  // rest. Supports wheel-zoom, drag-pan and double-click-to-reset; the
+  // viewport (intervalView) persists across redraws so a 30s poll refresh
+  // doesn't yank the user's zoom around.
+  // ---------------------------------------------------------------------
+  function intervalDataExtent(snapshots) {
+    var allTs = [], allStrikes = [];
+    snapshots.forEach(function (s) {
+      allTs.push(new Date(s.ts).getTime());
+      s.strikes.forEach(function (p) { allStrikes.push(p.strike); });
+    });
+    if (!allTs.length || !allStrikes.length) return null;
+    var tLo = Math.min.apply(null, allTs), tHi = Math.max.apply(null, allTs);
+    var sLo = Math.min.apply(null, allStrikes), sHi = Math.max.apply(null, allStrikes);
+    var tPad = (tHi - tLo) * 0.03 || 60000;
+    var sPad = (sHi - sLo) * 0.08 || 10;
+    tLo -= tPad; tHi += tPad;
+    // Floor the time extent at 30 minutes wide (empty space *after* the
+    // latest snapshot, not before the earliest one) so early in a session —
+    // before 30 minutes of polls have accumulated — the default view
+    // doesn't stretch a handful of columns across the full chart width;
+    // columns sit at their real ~30s-apart spacing on the left, and the
+    // window just fills in from the left as more polls arrive.
+    var minSpan = 30 * 60 * 1000;
+    if (tHi - tLo < minSpan) tHi = tLo + minSpan;
+    return { tLo: tLo, tHi: tHi, sLo: sLo - sPad, sHi: sHi + sPad };
+  }
+
+  function clampIntervalView(view, full) {
+    var tSpan = view.tHi - view.tLo, sSpan = view.sHi - view.sLo;
+    if (tSpan > full.tHi - full.tLo) { view.tLo = full.tLo; view.tHi = full.tHi; }
+    else {
+      if (view.tLo < full.tLo) { view.tLo = full.tLo; view.tHi = full.tLo + tSpan; }
+      if (view.tHi > full.tHi) { view.tHi = full.tHi; view.tLo = full.tHi - tSpan; }
+    }
+    if (sSpan > full.sHi - full.sLo) { view.sLo = full.sLo; view.sHi = full.sHi; }
+    else {
+      if (view.sLo < full.sLo) { view.sLo = full.sLo; view.sHi = full.sLo + sSpan; }
+      if (view.sHi > full.sHi) { view.sHi = full.sHi; view.sLo = full.sHi - sSpan; }
+    }
+  }
+
+  // Real Deribit strikes are spaced $500/$1000 apart, not evenly — picks the
+  // n closest actual strike values to `spot` (ascending) so the Y-axis can
+  // show real rows instead of interpolated numbers.
+  function nearestStrikesToSpot(strikes, spot, n) {
+    if (!strikes || !strikes.length) return [];
+    var uniq = Array.from(new Set(strikes));
+    uniq.sort(function (a, b) { return Math.abs(a - spot) - Math.abs(b - spot); });
+    var picked = uniq.slice(0, n);
+    picked.sort(function (a, b) { return a - b; });
+    return picked;
+  }
+
+  function drawIntervalMap(canvas, tooltipEl, snapshots, spot) {
+    var dpr = window.devicePixelRatio || 1;
+    var cssWidth = canvas.parentElement.clientWidth;
+    var cssHeight = 460;
+    canvas.style.width = cssWidth + "px";
+    canvas.style.height = cssHeight + "px";
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    if (!snapshots || !snapshots.length) {
+      ctx.fillStyle = "#5b6472";
+      ctx.font = "12px " + getMonoFont();
+      ctx.textAlign = "center";
+      ctx.fillText("No GEX interval history available", cssWidth / 2, cssHeight / 2);
+      return;
+    }
+
+    var full = intervalDataExtent(snapshots);
+    if (!full) return;
+    intervalFullExtent = full;
+    if (!intervalView) {
+      // Default to the last 30 minutes — at the full time range, markers
+      // sit close enough together to blur into solid bars (bubble map only
+      // reads clearly with some breathing room between columns).
+      var defaultSpan = Math.min(30 * 60 * 1000, full.tHi - full.tLo);
+      intervalView = { tLo: full.tHi - defaultSpan, tHi: full.tHi, sLo: full.sLo, sHi: full.sHi };
+    } else if (!intervalXManual) {
+      // Auto-follow: keep the current zoom span but re-pin its right edge to
+      // the newest snapshot, so new polls scroll into view on their own
+      // instead of requiring a double-click or a slider drag.
+      var span = intervalView.tHi - intervalView.tLo;
+      intervalView.tHi = full.tHi;
+      intervalView.tLo = full.tHi - span;
+      clampIntervalView(intervalView, full);
+    } else {
+      clampIntervalView(intervalView, full);
+    }
+    var view = intervalView;
+
+    // Y-axis auto-follow: unless the user has manually zoomed/panned the
+    // strike axis, re-center every redraw on the 10 real strikes nearest the
+    // current spot. A sideways market still wiggles inside this fixed band;
+    // a sharp move drags the band along since spot has moved to a different
+    // neighborhood of strikes.
+    var latestSnap = snapshots[snapshots.length - 1];
+    var latestStrikes = latestSnap.strikes.map(function (p) { return p.strike; }).sort(function (a, b) { return a - b; });
+    var nearestRows = nearestStrikesToSpot(latestStrikes, spot, INTERVAL_STRIKE_ROWS);
+    if (!intervalYManual && nearestRows.length) {
+      var step = nearestRows.length > 1
+        ? (nearestRows[nearestRows.length - 1] - nearestRows[0]) / (nearestRows.length - 1)
+        : nearestRows[0] * 0.01;
+      var sPad = step / 2 || 10;
+      view.sLo = nearestRows[0] - sPad;
+      view.sHi = nearestRows[nearestRows.length - 1] + sPad;
+    }
+
+    var padL = INTERVAL_PAD.L, padR = INTERVAL_PAD.R, padT = INTERVAL_PAD.T, padB = INTERVAL_PAD.B;
+    var plotW = cssWidth - padL - padR;
+    var plotH = cssHeight - padT - padB;
+
+    function xAt(t) { return padL + (t - view.tLo) / (view.tHi - view.tLo) * plotW; }
+    function yAt(s) { return padT + (1 - (s - view.sLo) / (view.sHi - view.sLo)) * plotH; }
+
+    // horizontal (strike) gridlines + labels — one row per *real* strike
+    // visible in the current view, not an evenly-interpolated numeric scale
+    // (which produced off-grid, "odd" looking values between actual strikes).
+    ctx.font = "10px " + getMonoFont();
+    ctx.textBaseline = "middle";
+    var visibleRows = latestStrikes.filter(function (s) { return s >= view.sLo && s <= view.sHi; });
+    if (!visibleRows.length) visibleRows = nearestRows;
+    visibleRows.forEach(function (sVal) {
+      var y = yAt(sVal);
+      ctx.strokeStyle = "#1b212a";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
+      ctx.fillStyle = "#5b6472";
+      ctx.textAlign = "right";
+      ctx.fillText(fmtStrike(sVal), padL - 8, y);
+    });
+
+    // vertical (time) ticks along the bottom
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    var tTicks = Math.min(8, Math.max(2, Math.round(plotW / 90)));
+    for (var tI = 0; tI <= tTicks; tI++) {
+      var tVal = view.tLo + (view.tHi - view.tLo) * (tI / tTicks);
+      var x = xAt(tVal);
+      if (x < padL - 1 || x > cssWidth - padR + 1) continue;
+      var td = new Date(tVal);
+      ctx.fillStyle = "#5b6472";
+      ctx.fillText(String(td.getHours()).padStart(2, "0") + ":" + String(td.getMinutes()).padStart(2, "0"), x, cssHeight - padB + 6);
+    }
+
+    // markers — clip to the plot area so panning/zooming doesn't draw over labels
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(padL, padT, plotW, plotH);
+    ctx.clip();
+
+    var metric = intervalMetric === "call_gex" || intervalMetric === "put_gex" ? intervalMetric : "net_gex";
+    var maxAbs = 0;
+    snapshots.forEach(function (s) { s.strikes.forEach(function (p) { maxAbs = Math.max(maxAbs, Math.abs(p[metric] || 0)); }); });
+    maxAbs = maxAbs || 1;
+    var minR = 1.6, maxR = 11;
+    // sqrt scaling on |GEX|: a few outsized strikes otherwise dwarf the rest.
+    function radiusFor(v) { return minR + Math.sqrt(Math.abs(v) / maxAbs) * (maxR - minR); }
+
+    intervalPoints = [];
+    snapshots.forEach(function (s) {
+      var t = new Date(s.ts).getTime();
+      var x = xAt(t);
+      if (x < padL - maxR || x > cssWidth - padR + maxR) return;
+      s.strikes.forEach(function (p) {
+        var y = yAt(p.strike);
+        if (y < padT - maxR || y > cssHeight - padB + maxR) return;
+        var v = p[metric] || 0;
+        var r = radiusFor(v);
+        ctx.beginPath();
+        ctx.fillStyle = v >= 0 ? "#1fa37b" : "#e0824a";
+        ctx.globalAlpha = 0.88;
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        intervalPoints.push({
+          x: x, y: y, r: r, ts: s.ts, spot_price: s.spot_price, strike: p.strike,
+          net_gex: p.net_gex, call_gex: p.call_gex, put_gex: p.put_gex,
+        });
+      });
+    });
+
+    // price line — connects each accumulated snapshot's own (ts, spot) so
+    // it tracks BTC moving through the bubble grid over time.
+    var linePts = [];
+    snapshots.forEach(function (s) {
+      var t = new Date(s.ts).getTime();
+      if (t < view.tLo || t > view.tHi) return;
+      if (s.spot_price < view.sLo || s.spot_price > view.sHi) return;
+      linePts.push({ x: xAt(t), y: yAt(s.spot_price) });
+    });
+    if (linePts.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = "#3aa0ff";
+      ctx.lineWidth = 1.75;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      linePts.forEach(function (pt, i) { i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y); });
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // current-time indicator (latest snapshot), drawn faint so it doesn't hide markers
+    var latestTs = new Date(snapshots[snapshots.length - 1].ts).getTime();
+    var lx = xAt(latestTs);
+    if (lx >= padL && lx <= cssWidth - padR) {
+      ctx.save();
+      ctx.strokeStyle = "#e0c526";
+      ctx.globalAlpha = 0.4;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(lx, padT); ctx.lineTo(lx, padT + plotH); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // underlying price reference line — spans the chart, updates with spot
+    if (spot !== null && spot !== undefined && spot >= view.sLo && spot <= view.sHi) {
+      var sy = yAt(spot);
+      ctx.save();
+      ctx.strokeStyle = "#808b9a";
+      ctx.setLineDash([6, 3]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(padL, sy); ctx.lineTo(cssWidth - padR, sy); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = "#c7ccd4";
+      ctx.font = "10px " + getMonoFont();
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("BTC " + fmtUsd0(spot), padL + 4, sy - 3);
+    }
+    setLevelLabel("interval-lvl-spot", spot);
+
+    ctx.strokeStyle = "#232a35";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(padL, padT, plotW, plotH);
+
+    // ---- interaction: wired once per canvas, reads module-level state so
+    // it stays correct across redraws (poll refresh, zoom, pan, resize) ----
+    if (!canvas.dataset.intervalWired) {
+      canvas.dataset.intervalWired = "1";
+
+      canvas.addEventListener("mousemove", function (e) {
+        if (intervalDrag.active) return;
+        var rect = canvas.getBoundingClientRect();
+        var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        var hit = null, bestDist = Infinity;
+        intervalPoints.forEach(function (p) {
+          var d = Math.hypot(p.x - mx, p.y - my);
+          if (d <= p.r + 4 && d < bestDist) { bestDist = d; hit = p; }
+        });
+        if (hit) {
+          var dt = new Date(hit.ts);
+          tooltipEl.innerHTML =
+            '<div style="color:#fff">' + dt.toLocaleTimeString("en-US", { hour12: false }) + '</div>' +
+            '<div style="color:var(--text-dim); margin-bottom:4px;">' +
+            dt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) + '</div>' +
+            '<div>BTC: ' + fmtUsd0(hit.spot_price) + '</div>' +
+            '<div>Strike: ' + fmtStrike(hit.strike) + '</div>' +
+            '<div style="color:var(--pos)">Call GEX: +$' + fmtLarge(Math.abs(hit.call_gex || 0)) + '</div>' +
+            '<div style="color:var(--neg)">Put GEX: -$' + fmtLarge(Math.abs(hit.put_gex || 0)) + '</div>' +
+            '<div style="color:' + (hit.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: ' +
+            (hit.net_gex >= 0 ? "+" : "-") + '$' + fmtLarge(Math.abs(hit.net_gex)) + '</div>';
+          tooltipEl.style.left = Math.min(hit.x + 14, rect.width - 170) + "px";
+          tooltipEl.style.top = Math.max(hit.y - 90, 0) + "px";
+          tooltipEl.classList.add("show");
+        } else {
+          tooltipEl.classList.remove("show");
+        }
+      });
+      canvas.addEventListener("mouseleave", function () { tooltipEl.classList.remove("show"); });
+
+      canvas.addEventListener("wheel", function (e) {
+        if (!intervalView || !intervalFullExtent) return;
+        e.preventDefault();
+        var rect = canvas.getBoundingClientRect();
+        var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        var v = intervalView, f = intervalFullExtent;
+        var pw = rect.width - INTERVAL_PAD.L - INTERVAL_PAD.R;
+        var ph = rect.height - INTERVAL_PAD.T - INTERVAL_PAD.B;
+        var ct = v.tLo + (mx - INTERVAL_PAD.L) / pw * (v.tHi - v.tLo);
+        var cs = v.sLo + (1 - (my - INTERVAL_PAD.T) / ph) * (v.sHi - v.sLo);
+        var factor = e.deltaY < 0 ? 0.85 : 1 / 0.85;
+        var minTSpan = 3 * 60 * 1000; // don't zoom time in past 3 minutes
+        var minSSpan = (f.sHi - f.sLo) * 0.03 || 5;
+
+        if (e.shiftKey) {
+          var newSLo = cs - (cs - v.sLo) * factor, newSHi = cs + (v.sHi - cs) * factor;
+          if (newSHi - newSLo < minSSpan) return;
+          v.sLo = newSLo; v.sHi = newSHi;
+          intervalYManual = true; // explicit vertical zoom — stop auto-following spot
+        } else {
+          var newTLo = ct - (ct - v.tLo) * factor, newTHi = ct + (v.tHi - ct) * factor;
+          if (newTHi - newTLo < minTSpan) return;
+          v.tLo = newTLo; v.tHi = newTHi;
+          intervalXManual = true; // explicit time zoom — stop auto-scrolling to latest
+        }
+        clampIntervalView(v, f);
+        drawIntervalMap(canvas, tooltipEl, liveGexHistory, latest ? latest.key_levels.spot_price : spot);
+      }, { passive: false });
+
+      canvas.addEventListener("mousedown", function (e) {
+        intervalDrag.active = true;
+        intervalDrag.startX = e.clientX;
+        intervalDrag.startY = e.clientY;
+        intervalDrag.startView = intervalView ? {
+          tLo: intervalView.tLo, tHi: intervalView.tHi, sLo: intervalView.sLo, sHi: intervalView.sHi,
+        } : null;
+        canvas.style.cursor = "grabbing";
+        tooltipEl.classList.remove("show");
+      });
+      window.addEventListener("mousemove", function (e) {
+        if (!intervalDrag.active || !intervalDrag.startView || !intervalFullExtent) return;
+        var rect = canvas.getBoundingClientRect();
+        var pw = rect.width - INTERVAL_PAD.L - INTERVAL_PAD.R;
+        var ph = rect.height - INTERVAL_PAD.T - INTERVAL_PAD.B;
+        var sv = intervalDrag.startView;
+        var tSpan = sv.tHi - sv.tLo, sSpan = sv.sHi - sv.sLo;
+        var dt = -(e.clientX - intervalDrag.startX) / pw * tSpan;
+        var ds = (e.clientY - intervalDrag.startY) / ph * sSpan;
+        intervalView = { tLo: sv.tLo + dt, tHi: sv.tHi + dt, sLo: sv.sLo + ds, sHi: sv.sHi + ds };
+        clampIntervalView(intervalView, intervalFullExtent);
+        intervalXManual = true; // explicit drag — stop auto-scrolling to latest
+        intervalYManual = true; // explicit drag — stop auto-following spot
+        drawIntervalMap(canvas, tooltipEl, liveGexHistory, latest ? latest.key_levels.spot_price : spot);
+      });
+      window.addEventListener("mouseup", function () {
+        if (intervalDrag.active) { intervalDrag.active = false; canvas.style.cursor = "default"; }
+      });
+
+      canvas.addEventListener("dblclick", function () {
+        intervalView = null;
+        intervalXManual = false; // back to auto-scrolling to the latest time
+        intervalYManual = false; // back to auto-following the 10 strikes nearest spot
+        drawIntervalMap(canvas, tooltipEl, liveGexHistory, latest ? latest.key_levels.spot_price : spot);
+      });
+    }
+
+    if (!intervalSliderDraw) {
+      intervalSliderDraw = makeRangeSlider(el.intervalRangeSlider, {
+        getFull: function () { return intervalFullExtent ? { lo: intervalFullExtent.tLo, hi: intervalFullExtent.tHi } : null; },
+        getView: function () { return intervalView ? { lo: intervalView.tLo, hi: intervalView.tHi } : null; },
+        setView: function (lo, hi) { intervalView.tLo = lo; intervalView.tHi = hi; },
+        onChange: function () {
+          intervalXManual = true; // explicit slider drag — stop auto-scrolling to latest
+          drawIntervalMap(canvas, tooltipEl, liveGexHistory, latest ? latest.key_levels.spot_price : spot);
+        },
+        minSpan: 3 * 60 * 1000,
+      });
+    }
+    intervalSliderDraw();
   }
 
   // ---------------------------------------------------------------------
@@ -1254,6 +1903,11 @@
     redrawGexChart();
   });
 
+  el.intervalMetricSelect.addEventListener("change", function () {
+    intervalMetric = el.intervalMetricSelect.value;
+    if (latest) drawIntervalMap(el.intervalChart, el.intervalTooltip, liveGexHistory, latest.key_levels.spot_price);
+  });
+
   // ---------------------------------------------------------------------
   // Meta / timestamps
   // ---------------------------------------------------------------------
@@ -1286,6 +1940,7 @@
     redrawGexChart();
     drawPriceChart(el.priceChart, el.priceTooltip, priceCandles, d.key_levels);
     drawOiChart(el.oiChart, el.oiTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
+    drawIntervalMap(el.intervalChart, el.intervalTooltip, liveGexHistory, d.key_levels.spot_price);
     renderExpirationStructure(d);
     renderOiConcentration(d);
     renderGexConcentration(d);
@@ -1309,12 +1964,32 @@
     }
   }
 
+  function accumulateGexSnapshot(d) {
+    // Builds the Interval Map's history entirely client-side from the live
+    // full per-strike chain (d.net_gex_profile) — NOT from feature_gex_snapshot,
+    // which only keeps the top-10-by-|GEX| strikes for the separate GEX Level
+    // leaderboard. Session-only: resets on reload, retained for GEX_HISTORY_RETENTION_MS.
+    var spot = d.key_levels.spot_price;
+    var profile = d.net_gex_profile || [];
+    var lo = spot * (1 - GEX_STRIKE_BAND_PCT), hi = spot * (1 + GEX_STRIKE_BAND_PCT);
+    var strikes = profile
+      .filter(function (r) { return r.strike >= lo && r.strike <= hi; })
+      .map(function (r) { return { strike: r.strike, net_gex: r.net_gex, call_gex: r.call_gex, put_gex: r.put_gex }; });
+    liveGexHistory.push({ ts: new Date().toISOString(), spot_price: spot, strikes: strikes });
+
+    var cutoff = Date.now() - GEX_HISTORY_RETENTION_MS;
+    while (liveGexHistory.length && new Date(liveGexHistory[0].ts).getTime() < cutoff) {
+      liveGexHistory.shift();
+    }
+  }
+
   async function refresh() {
     try {
       var res = await fetch("/api/options/dashboard");
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       await refreshPriceHistory();
+      accumulateGexSnapshot(d);
       renderAll(d);
     } catch (e) {
       el.connDot.classList.add("off");
