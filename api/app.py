@@ -73,6 +73,14 @@ def dashboard() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/health", include_in_schema=False)
+def health() -> dict:
+    """Tiny keep-alive target — no DB/file I/O, so it stays fast and small
+    even as the dashboard page grows. Point external uptime/cron pings here,
+    not at "/" (which returns the full dashboard HTML)."""
+    return {"status": "ok"}
+
+
 @app.get("/api/options/dashboard", include_in_schema=False)
 def options_dashboard() -> dict:
     try:
