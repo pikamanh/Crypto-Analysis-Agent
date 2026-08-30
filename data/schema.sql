@@ -80,6 +80,12 @@ SELECT create_hypertable('feature_gex_snapshot', 'ts', if_not_exists => TRUE);
 -- kept separate from feature_gex_snapshot (top-10 by |GEX|, kept
 -- indefinitely for the GEX Level leaderboard) — this table is pruned
 -- aggressively since it's the full chain, not just the top 10.
+--
+-- Retention is NOT add_retention_policy() — that's a background-job policy
+-- gated behind the (non-Apache) Timescale license, which managed instances
+-- like Aiven's don't ship. Instead data/ingest.py calls drop_chunks()
+-- directly on an hourly timer (see prune_options_gex_profile), which is
+-- plain Apache-licensed hypertable functionality.
 CREATE TABLE IF NOT EXISTS feature_gex_profile_snapshot (
     ts          TIMESTAMPTZ NOT NULL,
     symbol      TEXT NOT NULL,
@@ -89,7 +95,6 @@ CREATE TABLE IF NOT EXISTS feature_gex_profile_snapshot (
     PRIMARY KEY (ts, symbol, exchange)
 );
 SELECT create_hypertable('feature_gex_profile_snapshot', 'ts', if_not_exists => TRUE);
-SELECT add_retention_policy('feature_gex_profile_snapshot', INTERVAL '24 hours', if_not_exists => TRUE);
 
 CREATE TABLE IF NOT EXISTS raw_liquidations (
     ts          TIMESTAMPTZ NOT NULL,

@@ -72,6 +72,18 @@ def fetch_gex_profile_history(symbol: str, exchange: str, hours: int) -> list[di
     ]
 
 
+def prune_gex_profile_history(older_than_hours: int = 24) -> None:
+    """Manual stand-in for add_retention_policy(), which needs the
+    (non-Apache) Timescale license managed instances like Aiven's don't
+    ship — see the comment on feature_gex_profile_snapshot in schema.sql.
+    drop_chunks() removes whole chunks (metadata-only) rather than deleting
+    rows one at a time, so this stays cheap even called hourly."""
+    query = "SELECT drop_chunks('feature_gex_profile_snapshot', older_than => (%s || ' hours')::interval)"
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(query, (older_than_hours,))
+    conn.close()
+
+
 def insert_rows(
     table: str,
     columns: Sequence[str],

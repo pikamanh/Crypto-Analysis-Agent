@@ -24,7 +24,7 @@ from psycopg2.extras import Json
 
 load_dotenv()
 
-from data.db import init_db, insert_rows  # noqa: E402
+from data.db import init_db, insert_rows, prune_gex_profile_history  # noqa: E402
 from data.sources import binance, deribit  # noqa: E402
 from data.sources.binance import BinanceBannedError, BinanceStreamNotReadyError  # noqa: E402
 
@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 OHLCV_FUTURES_INTERVAL_SECONDS = 60
 OPTIONS_CHAIN_INTERVAL_SECONDS = 60
+GEX_PROFILE_RETENTION_HOURS = 24
+GEX_PROFILE_PRUNE_INTERVAL_SECONDS = 3600  # hourly is plenty for a 24h window
 
 OHLCV_COLUMNS = ["ts", "symbol", "exchange", "open", "high", "low", "close", "volume"]
 FUTURES_COLUMNS = ["ts", "symbol", "exchange", "open_interest", "funding_rate", "mark_price", "index_price"]
@@ -94,6 +96,17 @@ def poll_options_snapshot() -> None:
         logger.exception("options snapshot poll failed")
 
 
+def prune_options_gex_profile() -> None:
+    """Runs on its own hourly timer, separate from the 60s snapshot poll —
+    drop_chunks() is cheap but there's no need to call it every tick for a
+    24h retention window. See db.prune_gex_profile_history."""
+    try:
+        prune_gex_profile_history(GEX_PROFILE_RETENTION_HOURS)
+        logger.info("pruned feature_gex_profile_snapshot chunks older than %dh", GEX_PROFILE_RETENTION_HOURS)
+    except Exception:
+        logger.exception("gex profile prune failed")
+
+
 def on_liquidation(row: dict) -> None:
     try:
         insert_rows(
@@ -117,6 +130,7 @@ async def poll_loop() -> None:
     await asyncio.gather(
         _run_on_interval(poll_futures_snapshot, OHLCV_FUTURES_INTERVAL_SECONDS),
         _run_on_interval(poll_options_snapshot, OPTIONS_CHAIN_INTERVAL_SECONDS),
+        _run_on_interval(prune_options_gex_profile, GEX_PROFILE_PRUNE_INTERVAL_SECONDS),
     )
 
 
