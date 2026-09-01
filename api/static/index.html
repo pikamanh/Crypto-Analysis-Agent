@@ -756,8 +756,7 @@
   }
   function fmtTime(ts) {
     if (!ts) return "—";
-    var d = new Date(ts * 1000);
-    return d.toLocaleTimeString("en-US", { hour12: false }) + " UTC".replace("UTC", "");
+    return fmtHHMM(new Date(ts * 1000));
   }
   function fmtHours(h) {
     if (h === null || h === undefined) return "—";
@@ -1411,7 +1410,7 @@
       });
       if (nearest && bestDist < 20) {
         var c = nearest.candle;
-        tooltipEl.innerHTML = '<div style="color:#fff">' + new Date(c.ts).toLocaleTimeString() + '</div>' +
+        tooltipEl.innerHTML = '<div style="color:#fff">' + fmtHHMM(new Date(c.ts)) + '</div>' +
           '<div>Close: ' + fmtUsd0(c.close) + '</div>';
         tooltipEl.style.left = Math.min(nearest.x + 14, rect.width - 150) + "px";
         tooltipEl.style.top = Math.max(nearest.y - 30, 0) + "px";
@@ -2249,7 +2248,7 @@
     var meta = d.meta;
     var now = new Date();
     el.metaBlock.innerHTML =
-      '<div><b>Last Updated</b> ' + now.toLocaleTimeString() + '</div>' +
+      '<div><b>Last Updated</b> ' + fmtHHMM(now) + '</div>' +
       '<div>Market Data: ' + fmtTime(meta.market_data_ts) + '</div>' +
       '<div>GEX Data: ' + fmtTime(meta.gex_data_ts) + ' &nbsp;|&nbsp; OI Data: ' + fmtTime(meta.oi_data_ts) + '</div>';
     el.footerNote.textContent = SYMBOL_CONFIG[currentSymbol].footerNote;

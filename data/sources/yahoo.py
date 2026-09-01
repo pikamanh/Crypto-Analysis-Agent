@@ -47,6 +47,15 @@ def _rows_from_chart_result(result: dict) -> List[dict]:
 
     rows = []
     for i, t in enumerate(timestamps):
+        if t % 60 != 0:
+            # The last element is usually the still-forming current-minute
+            # bar, stamped with the actual (sub-minute) fetch time instead of
+            # a minute boundary — every closed candle lands exactly on :00.
+            # Keeping it would insert a near-duplicate, volume=0 row each
+            # poll (distinct ts under the (ts, symbol, exchange) PK, so
+            # ON CONFLICT DO NOTHING doesn't dedupe it) until the bar
+            # finally closes on the next full minute.
+            continue
         o = opens[i] if i < len(opens) else None
         h = highs[i] if i < len(highs) else None
         l = lows[i] if i < len(lows) else None
@@ -69,14 +78,17 @@ def _rows_from_chart_result(result: dict) -> List[dict]:
     return rows
 
 
-def fetch_ohlcv_1m(range_: str = "5d") -> List[dict]:
+def fetch_ohlcv_1m(range_: str = "1d") -> List[dict]:
     """1-minute candles for QQQ from Yahoo's chart API, oldest first.
 
-    `range_="5d"` (Yahoo's max span at 1m granularity) rather than "1d" so a
-    cold ingest start (or a gap from the process being asleep) backfills
-    several trading days in one call instead of trickling in one candle at a
-    time — insert_rows()'s ON CONFLICT DO NOTHING makes re-sending already-
-    ingested candles on every poll a no-op.
+    `range_="1d"` (today's session only) rather than a wider span: raw_ohlcv
+    is truncated back to empty by the daily backup job (data/backup.py), and
+    with ON CONFLICT DO NOTHING every poll re-sends its whole range as a
+    cheap no-op — so a wider range (e.g. "5d") would silently repopulate
+    several days of history within one poll cycle right after each
+    truncate, defeating the "today only" retention that truncate is meant
+    to enforce. The cost: a cold ingest start (or a gap from the process
+    being asleep) only backfills the current session, not prior days.
     """
     def fetch() -> List[dict]:
         resp = requests.get(
