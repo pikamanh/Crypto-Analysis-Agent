@@ -243,6 +243,15 @@ def _historical_volatility_30d() -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 def get_options_dashboard() -> dict:
+    """Cached wrapper — see the note on qqq_options_engine.get_qqq_options_dashboard
+    for why: without this, every call re-solves IV + GEX/DEX aggregation for
+    the whole chain from scratch, which is real CPU work a burst of
+    concurrent requests (or a request racing the ingest poll) can pile up on
+    Render's throttled free-tier CPU."""
+    return _cached_get_raw(_CACHE, "dashboard", ttl=25, fetch_fn=_compute_options_dashboard)
+
+
+def _compute_options_dashboard() -> dict:
     now = datetime.now(timezone.utc)
     spot = _fetch_spot()
     chain_ts = time.time()

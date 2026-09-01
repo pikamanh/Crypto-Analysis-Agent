@@ -306,6 +306,20 @@ def get_raw_chain_snapshot() -> Tuple[float, List[dict]]:
 # ---------------------------------------------------------------------------
 
 def get_qqq_options_dashboard() -> dict:
+    """Cached wrapper around _compute_qqq_options_dashboard — see there for
+    what actually gets built. ttl=25s sits just under the frontend's 30s
+    poll interval (REFRESH_MS in index.html), so it still refreshes every
+    poll but collapses any burst of near-simultaneous calls (multiple
+    browser tabs, a request racing the ~60s ingest tick, retried fetches)
+    into a single computation instead of recomputing the whole chain's IV
+    solve + GEX/DEX aggregation from scratch for each one. That recompute is
+    real CPU work, and Render's free-tier CPU is throttled enough that a
+    pile-up of concurrent recomputations was starving every other request
+    (including /health) for minutes at a time."""
+    return _cached_get_raw(_CACHE, "dashboard", ttl=25, fetch_fn=_compute_qqq_options_dashboard)
+
+
+def _compute_qqq_options_dashboard() -> dict:
     """QQQ equivalent of options_engine.get_options_dashboard() — same
     output shape (so the frontend can reuse its chart-rendering code
     unchanged), built from Nasdaq alone instead of Deribit.
