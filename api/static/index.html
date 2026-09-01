@@ -46,6 +46,16 @@
   .dot.off { background: var(--text-dim); box-shadow: 0 0 0 3px rgba(128,139,154,.12); }
   .brand h1 { font-size: 14px; font-weight: 700; margin: 0; letter-spacing: .03em; }
   .brand .sub { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+  .symbol-toggle { display: flex; gap: 6px; }
+  .symbol-btn {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .03em;
+    padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted); cursor: pointer;
+  }
+  .symbol-btn:hover { color: var(--text); border-color: var(--text-dim); }
+  .symbol-btn.active { background: var(--accent, #3aa0ff); border-color: var(--accent, #3aa0ff); color: #0a0e14; }
+  .symbol-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .symbol-btn:disabled:hover { color: var(--text-muted); border-color: var(--border); }
   .meta-block { text-align: right; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-dim); line-height: 1.6; }
   .meta-block b { color: var(--text-muted); }
 
@@ -143,7 +153,19 @@
 
   .big-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
   .big-card h2 { font-size: 13px; font-weight: 700; letter-spacing: .04em; margin: 0 0 3px; }
+  .info-icon { font-size: 12px; color: var(--text-dim); cursor: help; margin-bottom: 3px; }
   .big-card .chart-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
+
+  /* Side-by-side panel-grid cards can carry subtitle/legend text of very
+     different lengths (e.g. "OI by Strike" vs "OI x IV by Strike"), which
+     wraps to a different number of lines per card and pushes that card's
+     chart-wrap down relative to its sibling — visually "lệch" (misaligned)
+     axes even though both canvases are the same height. Reserving a fixed
+     floor here (sized for the worst-case 2-line subtitle / 2-row legend)
+     keeps both cards' header blocks the same height regardless of their
+     actual text, so the charts always start at the same y position. */
+  .panel-grid .big-card .chart-sub { min-height: 28px; }
+  .panel-grid .big-card .legend { min-height: 42px; align-content: flex-start; }
 
   .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
@@ -244,9 +266,13 @@
       <div class="brand">
         <span class="dot off" id="conn-dot"></span>
         <div>
-          <h1>BTC OPTIONS DASHBOARD</h1>
-          <div class="sub">Gamma / Delta Exposure &amp; Options Positioning Terminal — live from Deribit</div>
+          <h1 id="page-title">QQQ OPTIONS DASHBOARD</h1>
+          <div class="sub" id="page-sub">Gamma / Delta Exposure &amp; Options Positioning Terminal — live from Nasdaq</div>
         </div>
+      </div>
+      <div class="symbol-toggle" id="symbol-toggle">
+        <button type="button" class="symbol-btn" data-symbol="btc">BTC</button>
+        <button type="button" class="symbol-btn active" data-symbol="qqq">QQQ</button>
       </div>
       <div class="meta-block" id="meta-block">
         <div><b>Last Updated</b> —</div>
@@ -256,7 +282,7 @@
     </header>
 
     <div class="err-banner" id="err-banner"></div>
-    <div class="loading-row" id="loading-row">Loading live BTC options chain from Deribit…</div>
+    <div class="loading-row" id="loading-row">Loading live QQQ options chain from Nasdaq…</div>
 
     <div id="dashboard-content" style="display:none">
 
@@ -269,40 +295,85 @@
               <div class="kl-sub">Summarizes options positioning data, highlighting essential levels to guide your trading decisions.</div>
             </div>
             <div class="kl-settlement">
-              <div class="kl-settlement-label">0DTE settlement (08:00 UTC)</div>
+              <div class="kl-settlement-label" id="settlement-label">0DTE settlement (08:00 UTC)</div>
               <div class="kl-settlement-val" id="settlement-countdown">—</div>
             </div>
             <div class="kl-dots">&#8942;</div>
           </div>
           <div class="kl-grid" id="key-levels-grid"></div>
+          <div class="regime-card">
+            <div class="regime-badge neutral" id="regime-badge">— GAMMA</div>
+            <div class="regime-desc" id="regime-desc">—</div>
+          </div>
         </div>
       </section>
 
-      <!-- 1a. BTC PRICE with CR / PS / HVL overlay -->
-      <section>
-        <p class="section-title">BTC Price</p>
-        <div class="big-card">
-          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-            <div>
-              <h2>BTC/USDT — LAST 24H</h2>
-              <div class="chart-sub">1m close price (Binance futures), with key options-derived levels overlaid.</div>
+      <!-- 1a. PRICE with CR / PS / HVL overlay + GEX INTERVAL MAP, side by side -->
+      <div class="panel-grid">
+        <section>
+          <p class="section-title" id="price-section-title">BTC Price</p>
+          <div class="big-card">
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+              <div>
+                <h2 id="price-chart-title">BTC/USDT — LAST 24H</h2>
+                <div class="chart-sub" id="price-chart-sub">1m close price (Binance futures), with key options-derived levels overlaid.</div>
+              </div>
+            </div>
+            <div class="legend">
+              <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance (CR) <b id="price-lvl-call-res"></b></span>
+              <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support (PS) <b id="price-lvl-put-sup"></b></span>
+              <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="price-lvl-hvl"></b></span>
+              <span><i class="swatch line" style="border-color:var(--red-line); border-top-style:dotted;"></i> CR 0DTE <b id="price-lvl-call-res-0dte"></b></span>
+              <span><i class="swatch line" style="border-color:var(--pos); border-top-style:dotted;"></i> PS 0DTE <b id="price-lvl-put-sup-0dte"></b></span>
+              <span><i class="swatch line" style="border-color:#c7ccd4"></i> 1D Max <b id="price-lvl-day-max"></b></span>
+              <span><i class="swatch line" style="border-color:var(--text-dim)"></i> 1D Min <b id="price-lvl-day-min"></b></span>
+            </div>
+            <div class="chart-wrap">
+              <canvas class="chart" id="price-chart" height="420"></canvas>
+              <div class="chart-tooltip" id="price-tooltip"></div>
+            </div>
+            <div class="range-slider-wrap">
+              <canvas class="range-slider" id="price-range-slider"></canvas>
+              <div class="range-slider-hint">Drag edges to zoom, drag middle to pan</div>
             </div>
           </div>
-          <div class="legend">
-            <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance (CR) <b id="price-lvl-call-res"></b></span>
-            <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support (PS) <b id="price-lvl-put-sup"></b></span>
-            <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="price-lvl-hvl"></b></span>
+        </section>
+
+        <section>
+          <p class="section-title">GEX Interval Map</p>
+          <div class="big-card">
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+              <div>
+                <div style="display:flex; align-items:baseline; gap:6px;">
+                  <h2 id="interval-title">INTERVAL MAP (GEX) — BTC</h2>
+                  <span class="info-icon" title="Kept in this browser (localStorage) between visits, backfilled from the server's last 24h on load to cover any time the tab was closed. Auto-scrolls to the latest time and auto-follows the 10 real strikes nearest spot. Marker size = |GEX|, color = sign. Scroll to zoom, drag to pan, double-click to reset (also re-enables auto-follow).">ⓘ</span>
+                </div>
+                <div class="chart-sub" id="interval-chart-sub">Gamma exposure by strike over time, built live from each Deribit poll.</div>
+              </div>
+              <select class="exp-select" id="interval-metric-select">
+                <option value="net_gex">Net GEX</option>
+                <option value="call_gex">Call GEX</option>
+                <option value="put_gex">Put GEX</option>
+              </select>
+            </div>
+            <div class="legend">
+              <span><i class="swatch" style="background:var(--pos)"></i> Positive GEX</span>
+              <span><i class="swatch" style="background:var(--neg)"></i> Negative GEX</span>
+              <span><i class="swatch line" style="border-color:#3aa0ff"></i> <span id="interval-price-legend">BTC Price</span></span>
+              <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="interval-lvl-spot"></b></span>
+              <span><i class="swatch line" style="border-color:var(--yellow)"></i> Latest Time</span>
+            </div>
+            <div class="chart-wrap">
+              <canvas class="chart" id="interval-chart" height="420"></canvas>
+              <div class="chart-tooltip" id="interval-tooltip"></div>
+            </div>
+            <div class="range-slider-wrap">
+              <canvas class="range-slider" id="interval-range-slider"></canvas>
+              <div class="range-slider-hint">Drag edges to zoom, drag middle to pan</div>
+            </div>
           </div>
-          <div class="chart-wrap">
-            <canvas class="chart" id="price-chart" height="360"></canvas>
-            <div class="chart-tooltip" id="price-tooltip"></div>
-          </div>
-          <div class="range-slider-wrap">
-            <canvas class="range-slider" id="price-range-slider"></canvas>
-            <div class="range-slider-hint">Drag edges to zoom, drag middle to pan</div>
-          </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <!-- 1b. GEX LEVEL (top 10 by absolute GEX) -->
       <section>
@@ -344,8 +415,8 @@
         <div class="big-card">
           <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
             <div>
-              <h2>NET GEX MULTI-EXPIRATION FOR BTC</h2>
-              <div class="chart-sub">Gamma exposure distribution by strike price. Choose an expiration to inspect, or view the aggregate across all expirations.</div>
+              <h2 id="gex-multi-title">NET GEX MULTI-EXPIRATION FOR BTC</h2>
+              <div class="chart-sub">Gamma exposure distribution by strike price. Choose an expiration to inspect, or view the aggregate across all expirations. <b id="gex-multi-0dte"></b></div>
             </div>
             <select class="exp-select" id="exp-select"></select>
           </div>
@@ -364,101 +435,54 @@
         </div>
       </section>
 
-      <!-- 4b. GEX INTERVAL MAP -->
-      <section>
-        <p class="section-title">GEX Interval Map</p>
-        <div class="big-card">
-          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-            <div>
-              <h2>INTERVAL MAP (GEX) — BTC</h2>
-              <div class="chart-sub">Gamma exposure by strike over time, built live from each Deribit poll. Kept in this browser (localStorage) between visits, backfilled from the server's last 24h on load to cover any time the tab was closed. Auto-scrolls to the latest time and auto-follows the 10 real strikes nearest spot. Marker size = |GEX|, color = sign. Scroll to zoom, drag to pan, double-click to reset (also re-enables auto-follow).</div>
-            </div>
-            <select class="exp-select" id="interval-metric-select">
-              <option value="net_gex">Net GEX</option>
-              <option value="call_gex">Call GEX</option>
-              <option value="put_gex">Put GEX</option>
-            </select>
-          </div>
-          <div class="legend">
-            <span><i class="swatch" style="background:var(--pos)"></i> Positive GEX</span>
-            <span><i class="swatch" style="background:var(--neg)"></i> Negative GEX</span>
-            <span><i class="swatch line" style="border-color:#3aa0ff"></i> BTC Price</span>
-            <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="interval-lvl-spot"></b></span>
-            <span><i class="swatch line" style="border-color:var(--yellow)"></i> Latest Time</span>
-          </div>
-          <div class="chart-wrap">
-            <canvas class="chart" id="interval-chart" height="460"></canvas>
-            <div class="chart-tooltip" id="interval-tooltip"></div>
-          </div>
-          <div class="range-slider-wrap">
-            <canvas class="range-slider" id="interval-range-slider"></canvas>
-            <div class="range-slider-hint">Drag edges to zoom, drag middle to pan</div>
-          </div>
-        </div>
-      </section>
-
       <!-- 5. EXPIRATION STRUCTURE -->
       <section>
         <p class="section-title">Expiration Structure</p>
         <div class="exp-grid" id="exp-structure-grid"></div>
       </section>
 
-      <!-- 6. OPEN INTEREST BY STRIKE -->
-      <section>
-        <p class="section-title">Open Interest by Strike</p>
-        <div class="big-card">
-          <h2>OPEN INTEREST BY STRIKE</h2>
-          <div class="chart-sub">Call vs. put open interest concentration across the chain.</div>
-          <div class="legend">
-            <span><i class="swatch" style="background:var(--pos)"></i> Call OI</span>
-            <span><i class="swatch" style="background:var(--neg)"></i> Put OI</span>
-            <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="oi-lvl-call-res"></b></span>
-            <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="oi-lvl-put-sup"></b></span>
-            <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="oi-lvl-hvl"></b></span>
-            <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="oi-lvl-spot"></b></span>
-          </div>
-          <div class="chart-wrap">
-            <canvas class="chart" id="oi-chart" height="320"></canvas>
-            <div class="chart-tooltip" id="oi-tooltip"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 7 & 8: OI concentration + GEX concentration -->
+      <!-- 6 & 6b: OI BY STRIKE + OI x IV BY STRIKE, side by side -->
       <div class="panel-grid">
         <section>
-          <p class="section-title">OI Concentration</p>
-          <div class="conc-grid">
-            <div class="big-card">
-              <h2 style="font-size:11.5px; color:var(--pos)">CALL OI CONCENTRATION</h2>
-              <div id="call-oi-conc"></div>
+          <p class="section-title">OI by Strike</p>
+          <div class="big-card">
+            <h2>OI BY STRIKE</h2>
+            <div class="chart-sub">Call vs. put open interest concentration across the chain.</div>
+            <div class="legend">
+              <span><i class="swatch" style="background:var(--pos)"></i> Call OI</span>
+              <span><i class="swatch" style="background:var(--neg)"></i> Put OI</span>
+              <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="oi-lvl-call-res"></b></span>
+              <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="oi-lvl-put-sup"></b></span>
+              <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="oi-lvl-hvl"></b></span>
+              <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="oi-lvl-spot"></b></span>
             </div>
-            <div class="big-card">
-              <h2 style="font-size:11.5px; color:var(--neg)">PUT OI CONCENTRATION</h2>
-              <div id="put-oi-conc"></div>
+            <div class="chart-wrap">
+              <canvas class="chart" id="oi-chart" height="320"></canvas>
+              <div class="chart-tooltip" id="oi-tooltip"></div>
             </div>
           </div>
         </section>
+
         <section>
-          <p class="section-title">GEX Concentration</p>
-          <div class="big-card" id="gex-conc"></div>
+          <p class="section-title">OI x IV by Strike</p>
+          <div class="big-card">
+            <h2>OI X IV BY STRIKE <span id="oiiv-avg-iv" style="font-weight:400; color:var(--text-muted);"></span></h2>
+            <div class="chart-sub">Open interest weighted by implied volatility (OI × IV) per strike — highlights strikes carrying the most vol-weighted exposure, not just raw contract count.</div>
+            <div class="legend">
+              <span><i class="swatch" style="background:var(--pos)"></i> Call OI×IV</span>
+              <span><i class="swatch" style="background:var(--neg)"></i> Put OI×IV</span>
+              <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="oiiv-lvl-call-res"></b></span>
+              <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="oiiv-lvl-put-sup"></b></span>
+              <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="oiiv-lvl-hvl"></b></span>
+              <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="oiiv-lvl-spot"></b></span>
+            </div>
+            <div class="chart-wrap">
+              <canvas class="chart" id="oiiv-chart" height="320"></canvas>
+              <div class="chart-tooltip" id="oiiv-tooltip"></div>
+            </div>
+          </div>
         </section>
       </div>
-
-      <!-- 9. GAMMA REGIME -->
-      <section>
-        <p class="section-title">Gamma Regime</p>
-        <div class="regime-card">
-          <div class="regime-badge neutral" id="regime-badge">— GAMMA</div>
-          <div class="regime-desc" id="regime-desc">—</div>
-        </div>
-      </section>
-
-      <!-- 11. CURRENT WEEK VS NEXT WEEK -->
-      <section>
-        <p class="section-title">Current Week vs. Next Week</p>
-        <div class="compare-grid" id="week-compare"></div>
-      </section>
 
       <!-- 10. MARKET SIGNALS -->
       <section>
@@ -479,27 +503,88 @@
   "use strict";
 
   var REFRESH_MS = 30000;
+  // Shared canvas height for the Price chart and GEX Interval Map — they sit
+  // side by side in the same panel-grid row, so they must visualize at the
+  // same scale instead of two different hardcoded heights.
+  var CHART_ROW_HEIGHT = 420;
+  // Price chart Y-axis band: +/-1% around the latest close, re-centered
+  // every redraw so it moves with the price line.
+  var PRICE_Y_BAND_PCT = 0.01;
   var latest = null;
   var priceCandles = null;
   var pollTimer = null;
 
+  // Per-symbol config driving which endpoint is fetched, what unit labels
+  // are shown, and static copy that differs between BTC (Deribit, crypto
+  // perp price, 08:00 UTC daily settlement) and QQQ (Nasdaq, equity
+  // price, ~20:00 UTC market-close settlement). Both endpoints return the
+  // identical dashboard JSON shape (see api/greeks_engine.py), so every
+  // chart-rendering function below is reused unchanged — only these labels
+  // and the fetch target switch on toggle.
+  var SYMBOL_CONFIG = {
+    btc: {
+      label: "BTC",
+      unit: "BTC",
+      pageTitle: "BTC OPTIONS DASHBOARD",
+      pageSub: "Gamma / Delta Exposure & Options Positioning Terminal — live from Deribit",
+      loadingText: "Loading live BTC options chain from Deribit…",
+      priceSectionTitle: "BTC Price",
+      priceChartTitle: "BTC/USDT — LAST 24H",
+      priceChartSub: "1m close price (Binance futures), with key options-derived levels overlaid.",
+      gexMultiTitle: "NET GEX MULTI-EXPIRATION FOR BTC",
+      intervalTitle: "INTERVAL MAP (GEX) — BTC",
+      intervalChartSub: "Gamma exposure by strike over time, built live from each Deribit poll.",
+      settlementLabel: "0DTE settlement (08:00 UTC)",
+      footerNote: "Data sourced live from Deribit public API (options chain, DVOL, BTC-PERPETUAL). GEX/DEX derived via Black-Scholes using published mark IV — an approximation, not exchange-reported dealer positioning.",
+      offlineText: "Kết nối tới Deribit thất bại, đang thử lại…",
+      dashboardEndpoint: "/api/options/dashboard",
+      priceSymbol: null, priceExchange: null, // null -> server defaults (Binance BTC)
+      gexSymbol: null, gexExchange: null,     // null -> server defaults (Deribit BTC)
+      historyStorageKey: "btcOptionsDashboard.liveGexHistory.v1",
+    },
+    qqq: {
+      label: "QQQ",
+      unit: "contracts",
+      pageTitle: "QQQ OPTIONS DASHBOARD",
+      pageSub: "Gamma / Delta Exposure & Options Positioning Terminal — live from Nasdaq",
+      loadingText: "Loading live QQQ options chain from Nasdaq…",
+      priceSectionTitle: "QQQ Price",
+      priceChartTitle: "QQQ — LAST 24H",
+      priceChartSub: "1m close price (Yahoo Finance), with key options-derived levels overlaid.",
+      gexMultiTitle: "NET GEX MULTI-EXPIRATION FOR QQQ",
+      intervalTitle: "INTERVAL MAP (GEX) — QQQ",
+      intervalChartSub: "Gamma exposure by strike over time, built live from each Nasdaq poll.",
+      settlementLabel: "0DTE settlement (~20:00 UTC)",
+      footerNote: "Data sourced live from Nasdaq's option-chain and quote APIs (Strike/Bid/Ask/Volume/Open Interest, spot price) and Yahoo Finance (1m price history). Gamma/Delta derived by inverting Black-Scholes from quoted bid/ask (implied vol solve) — an in-house approximation, not exchange-published greeks.",
+      offlineText: "Kết nối tới Nasdaq thất bại, đang thử lại…",
+      dashboardEndpoint: "/api/options/qqq-dashboard",
+      priceSymbol: "QQQ", priceExchange: "yahoo",
+      gexSymbol: "QQQ", gexExchange: "nasdaq",
+      historyStorageKey: "qqqOptionsDashboard.liveGexHistory.v1",
+    },
+  };
+  // Always open on QQQ — BTC is opt-in per the server's BTC_ENABLE flag
+  // (see btcEnabled below) and even when enabled, the user has to choose it.
+  var currentSymbol = "qqq";
+  var btcEnabled = false;
+
   // GEX Interval Map data: built client-side, one entry per poll, from the
-  // live full-chain Deribit fetch (`net_gex_profile` in the dashboard
-  // response) — NOT from feature_gex_snapshot (that table only keeps the
-  // top-10-by-|GEX| strikes for the separate GEX Level leaderboard). This
-  // means the map only has history for strikes seen since the tab was
-  // opened — a deliberate tradeoff for showing every active strike (not
-  // just the top 10) without touching the DB schema. Persisted to this
-  // browser's localStorage (not the backend/DB) so it survives a reload —
-  // unaffected by Render restarts either way, since it never lived server-side.
+  // live full-chain fetch (`net_gex_profile` in the dashboard response) —
+  // NOT from feature_gex_snapshot (that table only keeps the top-10-by-|GEX|
+  // strikes for the separate GEX Level leaderboard). This means the map
+  // only has history for strikes seen since the tab was opened — a
+  // deliberate tradeoff for showing every active strike (not just the top
+  // 10) without touching the DB schema. Persisted to this browser's
+  // localStorage (not the backend/DB, one key per symbol — see
+  // SYMBOL_CONFIG[x].historyStorageKey) so it survives a reload — unaffected
+  // by Render restarts either way, since it never lived server-side.
   var GEX_HISTORY_RETENTION_MS = 6 * 60 * 60 * 1000; // keep last 6h client-side
-  var GEX_HISTORY_STORAGE_KEY = "btcOptionsDashboard.liveGexHistory.v1";
   var GEX_STRIKE_BAND_PCT = 0.20; // per snapshot, keep strikes within ±20% of spot
   var intervalMetric = "net_gex"; // net_gex | call_gex | put_gex — drives marker color/size
 
   function loadGexHistoryFromStorage() {
     try {
-      var raw = localStorage.getItem(GEX_HISTORY_STORAGE_KEY);
+      var raw = localStorage.getItem(SYMBOL_CONFIG[currentSymbol].historyStorageKey);
       if (!raw) return [];
       var parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
@@ -512,7 +597,7 @@
 
   function saveGexHistoryToStorage() {
     try {
-      localStorage.setItem(GEX_HISTORY_STORAGE_KEY, JSON.stringify(liveGexHistory));
+      localStorage.setItem(SYMBOL_CONFIG[currentSymbol].historyStorageKey, JSON.stringify(liveGexHistory));
     } catch (e) {
       // storage unavailable or over quota — history still works in-memory
       // for this tab, it just won't survive a reload.
@@ -566,21 +651,51 @@
     gexTooltip: document.getElementById("gex-tooltip"),
     oiChart: document.getElementById("oi-chart"),
     oiTooltip: document.getElementById("oi-tooltip"),
+    oiIvChart: document.getElementById("oiiv-chart"),
+    oiIvTooltip: document.getElementById("oiiv-tooltip"),
     intervalChart: document.getElementById("interval-chart"),
     intervalTooltip: document.getElementById("interval-tooltip"),
     intervalRangeSlider: document.getElementById("interval-range-slider"),
     intervalMetricSelect: document.getElementById("interval-metric-select"),
     priceRangeSlider: document.getElementById("price-range-slider"),
     expStructureGrid: document.getElementById("exp-structure-grid"),
-    callOiConc: document.getElementById("call-oi-conc"),
-    putOiConc: document.getElementById("put-oi-conc"),
-    gexConc: document.getElementById("gex-conc"),
     regimeBadge: document.getElementById("regime-badge"),
     regimeDesc: document.getElementById("regime-desc"),
-    weekCompare: document.getElementById("week-compare"),
     interpText: document.getElementById("interp-text"),
     footerNote: document.getElementById("footer-note"),
+    pageTitle: document.getElementById("page-title"),
+    pageSub: document.getElementById("page-sub"),
+    symbolToggle: document.getElementById("symbol-toggle"),
+    priceSectionTitle: document.getElementById("price-section-title"),
+    priceChartTitle: document.getElementById("price-chart-title"),
+    priceChartSub: document.getElementById("price-chart-sub"),
+    gexMultiTitle: document.getElementById("gex-multi-title"),
+    intervalTitle: document.getElementById("interval-title"),
+    intervalChartSub: document.getElementById("interval-chart-sub"),
+    intervalPriceLegend: document.getElementById("interval-price-legend"),
+    settlementLabel: document.getElementById("settlement-label"),
+    gexMulti0dte: document.getElementById("gex-multi-0dte"),
   };
+
+  function applySymbolChrome() {
+    var cfg = SYMBOL_CONFIG[currentSymbol];
+    document.title = cfg.label + " Options Dashboard";
+    el.pageTitle.textContent = cfg.pageTitle;
+    el.pageSub.textContent = cfg.pageSub;
+    el.loadingRow.textContent = cfg.loadingText;
+    el.priceSectionTitle.textContent = cfg.priceSectionTitle;
+    el.priceChartTitle.textContent = cfg.priceChartTitle;
+    el.priceChartSub.textContent = cfg.priceChartSub;
+    el.gexMultiTitle.textContent = cfg.gexMultiTitle;
+    el.intervalTitle.textContent = cfg.intervalTitle;
+    el.intervalChartSub.textContent = cfg.intervalChartSub;
+    el.intervalPriceLegend.textContent = cfg.label + " Price";
+    el.settlementLabel.textContent = cfg.settlementLabel;
+    el.footerNote.textContent = cfg.footerNote;
+    Array.prototype.forEach.call(el.symbolToggle.querySelectorAll(".symbol-btn"), function (btn) {
+      btn.classList.toggle("active", btn.dataset.symbol === currentSymbol);
+    });
+  }
 
   // ---------------------------------------------------------------------
   // Formatting helpers
@@ -617,6 +732,23 @@
   function fmtStrike(n) {
     if (n === null || n === undefined) return "—";
     return "$" + Math.round(n).toLocaleString("en-US");
+  }
+  // Whole-dollar rounding (fmtStrike) is fine for derived *levels* (call
+  // resistance, HVL, spot, ...) but collapses actual option strikes that
+  // sit on a sub-$1 increment — QQQ trades $0.50-wide strikes near the
+  // money, so e.g. 712.5 and 713.0 both render as "$713", making two
+  // distinct rows/bubbles/gridlines look identical (see Interval Map
+  // Y-axis, GEX Level table, interval-map tooltip). Use this instead
+  // anywhere the value is a real strike rather than a derived level.
+  function fmtStrikeExact(n) {
+    if (n === null || n === undefined) return "—";
+    var isWhole = Math.abs(n - Math.round(n)) < 1e-6;
+    return "$" + n.toLocaleString("en-US", isWhole ? {} : { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+  }
+  // HH:MM only — matches the Interval Map's X-axis tick format and the
+  // minute-level bucketing accumulateGexSnapshot() builds its history at.
+  function fmtHHMM(d) {
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
   function setLevelLabel(id, val) {
     var node = document.getElementById(id);
@@ -704,7 +836,7 @@
     el.gexLevelBody.innerHTML = rows.map(function (r) {
       return '<tr>' +
         '<td><span class="rank-badge">' + r.rank + '</span></td>' +
-        '<td>' + fmtStrike(r.strike) + '</td>' +
+        '<td>' + fmtStrikeExact(r.strike) + '</td>' +
         '<td class="' + signClass(r.net_gex) + '">$' + fmtLarge(r.net_gex) + '</td>' +
         '<td class="pos">$' + fmtLarge(r.call_gex) + '</td>' +
         '<td class="neg">$' + fmtLarge(r.put_gex) + '</td>' +
@@ -720,12 +852,13 @@
     var p = d.positioning;
     var subEl = document.getElementById("positioning-sub");
     if (subEl) subEl.textContent = expLabel ? "— " + expLabel : "";
+    var unit = SYMBOL_CONFIG[currentSymbol].unit;
     var rows = [
-      ["Total Open Interest", fmtLarge(p.total_oi) + " BTC", ""],
+      ["Total Open Interest", fmtLarge(p.total_oi) + " " + unit, ""],
       ["Total GEX", "$" + fmtLarge(p.total_gex), signClass(p.total_gex)],
       ["Total DEX", "$" + fmtLarge(p.total_dex), signClass(p.total_dex)],
-      ["Call OI", fmtLarge(p.call_oi) + " BTC", "pos"],
-      ["Put OI", fmtLarge(p.put_oi) + " BTC", "neg"],
+      ["Call OI", fmtLarge(p.call_oi) + " " + unit, "pos"],
+      ["Put OI", fmtLarge(p.put_oi) + " " + unit, "neg"],
       ["Put/Call OI", fmtRatio(p.put_call_oi_ratio), ""],
       ["Put/Call GEX", fmtRatio(p.put_call_gex_ratio), ""],
       ["Put/Call DEX", fmtRatio(p.put_call_dex_ratio), ""],
@@ -867,6 +1000,94 @@
   }
   function getMonoFont() { return '"SF Mono","JetBrains Mono",Menlo,Consolas,monospace'; }
 
+  // ---------------------------------------------------------------------
+  // Touch support: every chart interaction above/below (hover tooltip, drag
+  // to pan, wheel to zoom, double-click to reset) is built against mouse
+  // events only. Rather than re-implement each of those for touch, this
+  // translates touch gestures into the equivalent synthetic mouse/wheel
+  // events and dispatches them on the same canvas (bubbles, so window-level
+  // pan/drag listeners pick them up too) — the existing handlers work
+  // unchanged. Call once per canvas (each draw*/attach* site below guards
+  // with a dataset flag so redraws don't stack duplicate listeners).
+  //
+  //   opts.drag       — a finger moving past a small threshold starts a
+  //                      mousedown/mousemove/mouseup drag (chart panning);
+  //                      short taps under that threshold never fire
+  //                      mousedown, so they just show the tooltip and leave
+  //                      it up instead of it flashing hidden by a drag-start.
+  //   opts.dragImmediate — mousedown fires on touch, no threshold (range
+  //                      slider: a tap is itself a meaningful "jump here").
+  //   opts.doubleTap  — two quick taps in roughly the same spot fire
+  //                      dblclick (reset zoom/pan).
+  //   opts.pinch      — a second finger drives wheel events (zoom) from the
+  //                      pinch distance, centered on the pinch midpoint.
+  // ---------------------------------------------------------------------
+  function addTouchSupport(canvas, opts) {
+    opts = opts || {};
+    var lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+    var pinchDist = null, pinchMidX = 0, pinchMidY = 0;
+    var dragState = null; // { x0, y0, started }
+
+    function fire(type, x, y, extra) {
+      var init = Object.assign({ clientX: x, clientY: y, bubbles: true, cancelable: true, view: window }, extra || {});
+      var evt = type === "wheel" ? new WheelEvent("wheel", init) : new MouseEvent(type, init);
+      canvas.dispatchEvent(evt);
+    }
+    function touchDist(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+
+    canvas.addEventListener("touchstart", function (e) {
+      if (opts.pinch && e.touches.length === 2) {
+        pinchDist = touchDist(e.touches[0], e.touches[1]);
+        pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        e.preventDefault();
+        return;
+      }
+      if (e.touches.length !== 1) return;
+      var t = e.touches[0];
+      if (opts.doubleTap) {
+        var now = Date.now();
+        var isDouble = now - lastTapTime < 350 && Math.hypot(t.clientX - lastTapX, t.clientY - lastTapY) < 24;
+        lastTapTime = isDouble ? 0 : now; lastTapX = t.clientX; lastTapY = t.clientY;
+        if (isDouble) { fire("dblclick", t.clientX, t.clientY); e.preventDefault(); return; }
+      }
+      fire("mousemove", t.clientX, t.clientY);
+      if (opts.dragImmediate) fire("mousedown", t.clientX, t.clientY);
+      else if (opts.drag) dragState = { x0: t.clientX, y0: t.clientY, started: false };
+      e.preventDefault();
+    }, { passive: false });
+
+    canvas.addEventListener("touchmove", function (e) {
+      if (opts.pinch && e.touches.length === 2 && pinchDist != null) {
+        var d = touchDist(e.touches[0], e.touches[1]);
+        var deltaY = d > pinchDist ? -30 : 30; // fingers spreading apart = zoom in
+        pinchDist = d;
+        fire("wheel", pinchMidX, pinchMidY, { deltaY: deltaY });
+        e.preventDefault();
+        return;
+      }
+      if (e.touches.length !== 1) return;
+      var t = e.touches[0];
+      if (opts.drag && dragState && !dragState.started && Math.hypot(t.clientX - dragState.x0, t.clientY - dragState.y0) > 8) {
+        dragState.started = true;
+        fire("mousedown", dragState.x0, dragState.y0);
+      }
+      fire("mousemove", t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+
+    canvas.addEventListener("touchend", function (e) {
+      pinchDist = null;
+      var t = e.changedTouches[0];
+      if (opts.dragImmediate) {
+        if (t) fire("mouseup", t.clientX, t.clientY);
+      } else if (opts.drag && dragState) {
+        if (dragState.started) fire("mouseup", dragState.x0, dragState.y0);
+        dragState = null;
+      }
+    }, { passive: false });
+  }
+
   function attachTooltip(canvas, tooltipEl, items, textFn, mode) {
     canvas.onmousemove = function (e) {
       var rect = canvas.getBoundingClientRect();
@@ -886,6 +1107,10 @@
       }
     };
     canvas.onmouseleave = function () { tooltipEl.classList.remove("show"); };
+    if (!canvas.dataset.touchWired) {
+      canvas.dataset.touchWired = "1";
+      addTouchSupport(canvas, {}); // tap shows the tooltip; no drag/zoom on these charts
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1014,6 +1239,11 @@
       window.addEventListener("mouseup", function () {
         if (dragMode) { dragMode = null; canvas.style.cursor = "pointer"; }
       });
+
+      // A tap here is itself meaningful (grab a handle / jump the window),
+      // so mousedown fires immediately rather than waiting on a drag
+      // threshold like the charts above do.
+      addTouchSupport(canvas, { dragImmediate: true });
     }
 
     return draw;
@@ -1044,7 +1274,7 @@
   function drawPriceChart(canvas, tooltipEl, candles, levels) {
     var dpr = window.devicePixelRatio || 1;
     var cssWidth = canvas.parentElement.clientWidth;
-    var cssHeight = 360;
+    var cssHeight = CHART_ROW_HEIGHT;
     canvas.style.width = cssWidth + "px";
     canvas.style.height = cssHeight + "px";
     canvas.width = cssWidth * dpr;
@@ -1089,12 +1319,13 @@
     var plotW = cssWidth - padL - padR;
     var plotH = cssHeight - padT - padB;
 
-    var prices = visible.map(function (c) { return c.close; });
-    var levelVals = [levels.call_resistance, levels.put_support, levels.hvl].filter(function (v) { return v !== null && v !== undefined; });
-    var lo = Math.min.apply(null, prices.concat(levelVals));
-    var hi = Math.max.apply(null, prices.concat(levelVals));
-    var pad = (hi - lo) * 0.08 || hi * 0.01 || 1;
-    lo -= pad; hi += pad;
+    // Y-axis tracks a fixed +/-1% band around the current (latest) price
+    // instead of stretching to fit the whole visible range + every level —
+    // it moves with the price line every redraw rather than sitting still.
+    // Levels outside that band simply don't draw (hline() below skips them).
+    var lastPrice = visible[visible.length - 1].close;
+    var lo = lastPrice * (1 - PRICE_Y_BAND_PCT);
+    var hi = lastPrice * (1 + PRICE_Y_BAND_PCT);
 
     // Time-based X mapping (like the Interval Map) so real gaps show as real
     // gaps — e.g. the empty space priceDataExtent() pads in after the latest
@@ -1129,10 +1360,7 @@
     for (var tI = 0; tI <= tTicks; tI++) {
       var tVal = priceView.tLo + (priceView.tHi - priceView.tLo) * (tI / tTicks);
       var td = new Date(tVal);
-      ctx.fillText(
-        String(td.getHours()).padStart(2, "0") + ":" + String(td.getMinutes()).padStart(2, "0"),
-        xAt(tVal), cssHeight - padB + 6
-      );
+      ctx.fillText(fmtHHMM(td), xAt(tVal), cssHeight - padB + 6);
     }
 
     ctx.strokeStyle = "#5b8def";
@@ -1144,12 +1372,12 @@
     });
     ctx.stroke();
 
-    function hline(val, color) {
+    function hline(val, color, dash) {
       if (val === null || val === undefined || val < lo || val > hi) return;
       var y = yAt(val);
       ctx.save();
       ctx.strokeStyle = color;
-      ctx.setLineDash([6, 3]);
+      ctx.setLineDash(dash || [6, 3]);
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
       ctx.restore();
@@ -1157,10 +1385,20 @@
     hline(levels.call_resistance, "#d6483f");
     hline(levels.put_support, "#1fa37b");
     hline(levels.hvl, "#e0c526");
+    // 0DTE variants + expected 1-day range — dotted so they read as distinct
+    // from the all-expiry CR/PS lines even when they land close together.
+    hline(levels.call_resistance_0dte, "#d6483f", [2, 2]);
+    hline(levels.put_support_0dte, "#1fa37b", [2, 2]);
+    hline(levels.day_max, "#c7ccd4", [3, 3]);
+    hline(levels.day_min, "#5b6472", [3, 3]);
 
     setLevelLabel("price-lvl-call-res", levels.call_resistance);
     setLevelLabel("price-lvl-put-sup", levels.put_support);
     setLevelLabel("price-lvl-hvl", levels.hvl);
+    setLevelLabel("price-lvl-call-res-0dte", levels.call_resistance_0dte);
+    setLevelLabel("price-lvl-put-sup-0dte", levels.put_support_0dte);
+    setLevelLabel("price-lvl-day-max", levels.day_max);
+    setLevelLabel("price-lvl-day-min", levels.day_min);
 
     var points = visible.map(function (c) { return { x: xAt(new Date(c.ts).getTime()), y: yAt(c.close), candle: c }; });
     canvas.onmousemove = function (e) {
@@ -1188,6 +1426,13 @@
       priceXManual = false; // back to auto-scrolling to the latest candle
       drawPriceChart(canvas, tooltipEl, candles, levels);
     };
+    if (!canvas.dataset.touchWired) {
+      canvas.dataset.touchWired = "1";
+      // Drag-a-finger scrubs the tooltip along the line; double-tap resets
+      // zoom (matches double-click). Zoom/pan itself lives on the range
+      // slider below, which gets its own touch support.
+      addTouchSupport(canvas, { doubleTap: true });
+    }
 
     if (!priceSliderDraw) {
       priceSliderDraw = makeRangeSlider(el.priceRangeSlider, {
@@ -1264,7 +1509,7 @@
   function drawIntervalMap(canvas, tooltipEl, snapshots, spot) {
     var dpr = window.devicePixelRatio || 1;
     var cssWidth = canvas.parentElement.clientWidth;
-    var cssHeight = 460;
+    var cssHeight = CHART_ROW_HEIGHT;
     canvas.style.width = cssWidth + "px";
     canvas.style.height = cssHeight + "px";
     canvas.width = cssWidth * dpr;
@@ -1341,7 +1586,7 @@
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
       ctx.fillStyle = "#5b6472";
       ctx.textAlign = "right";
-      ctx.fillText(fmtStrike(sVal), padL - 8, y);
+      ctx.fillText(fmtStrikeExact(sVal), padL - 8, y);
     });
 
     // vertical (time) ticks along the bottom
@@ -1354,7 +1599,7 @@
       if (x < padL - 1 || x > cssWidth - padR + 1) continue;
       var td = new Date(tVal);
       ctx.fillStyle = "#5b6472";
-      ctx.fillText(String(td.getHours()).padStart(2, "0") + ":" + String(td.getMinutes()).padStart(2, "0"), x, cssHeight - padB + 6);
+      ctx.fillText(fmtHHMM(td), x, cssHeight - padB + 6);
     }
 
     // markers — clip to the plot area so panning/zooming doesn't draw over labels
@@ -1441,7 +1686,7 @@
       ctx.font = "10px " + getMonoFont();
       ctx.textAlign = "left";
       ctx.textBaseline = "bottom";
-      ctx.fillText("BTC " + fmtUsd0(spot), padL + 4, sy - 3);
+      ctx.fillText(SYMBOL_CONFIG[currentSymbol].label + " " + fmtUsd0(spot), padL + 4, sy - 3);
     }
     setLevelLabel("interval-lvl-spot", spot);
 
@@ -1466,11 +1711,11 @@
         if (hit) {
           var dt = new Date(hit.ts);
           tooltipEl.innerHTML =
-            '<div style="color:#fff">' + dt.toLocaleTimeString("en-US", { hour12: false }) + '</div>' +
+            '<div style="color:#fff">' + fmtHHMM(dt) + '</div>' +
             '<div style="color:var(--text-dim); margin-bottom:4px;">' +
             dt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) + '</div>' +
-            '<div>BTC: ' + fmtUsd0(hit.spot_price) + '</div>' +
-            '<div>Strike: ' + fmtStrike(hit.strike) + '</div>' +
+            '<div>' + SYMBOL_CONFIG[currentSymbol].label + ': ' + fmtUsd0(hit.spot_price) + '</div>' +
+            '<div>Strike: ' + fmtStrikeExact(hit.strike) + '</div>' +
             '<div style="color:var(--pos)">Call GEX: +$' + fmtLarge(Math.abs(hit.call_gex || 0)) + '</div>' +
             '<div style="color:var(--neg)">Put GEX: -$' + fmtLarge(Math.abs(hit.put_gex || 0)) + '</div>' +
             '<div style="color:' + (hit.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: ' +
@@ -1548,6 +1793,11 @@
         intervalYManual = false; // back to auto-following the 10 strikes nearest spot
         drawIntervalMap(canvas, tooltipEl, liveGexHistory, latest ? latest.key_levels.spot_price : spot);
       });
+
+      // One-finger drag pans (mousedown/mousemove/mouseup above), a short
+      // tap just shows the tooltip, two-finger pinch zooms the time axis
+      // (wheel), double-tap resets — see addTouchSupport().
+      addTouchSupport(canvas, { pinch: true, drag: true, doubleTap: true });
     }
 
     if (!intervalSliderDraw) {
@@ -1663,6 +1913,130 @@
     });
   }
 
+  // OI weighted by implied vol (OI x IV) per strike — same layout as
+  // drawOiChart, but bar height is call_oi*call_iv / put_oi*put_iv instead
+  // of raw OI. call_iv/put_iv are the OI-weighted average IV per strike
+  // from greeks_engine.profile_series (null when that side has no OI there).
+  function drawOiIvChart(canvas, tooltipEl, profile, levels, spot) {
+    var dpr = window.devicePixelRatio || 1;
+    var cssWidth = canvas.parentElement.clientWidth;
+    var cssHeight = 320;
+    canvas.style.width = cssWidth + "px";
+    canvas.style.height = cssHeight + "px";
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    var lo = spot * 0.55, hi = spot * 1.55;
+    var rows = profile.filter(function (r) { return r.strike >= lo && r.strike <= hi; });
+    if (!rows.length) rows = profile.slice();
+    rows.sort(function (a, b) { return a.strike - b.strike; });
+    rows = rows.map(function (r) {
+      return {
+        strike: r.strike,
+        net_gex: r.net_gex,
+        call_oi: r.call_oi,
+        put_oi: r.put_oi,
+        call_iv: r.call_iv,
+        put_iv: r.put_iv,
+        call_oiiv: r.call_oi * (r.call_iv || 0),
+        put_oiiv: r.put_oi * (r.put_iv || 0),
+      };
+    });
+
+    var padL = 56, padR = 16, padT = 10, padB = 30;
+    var plotW = cssWidth - padL - padR;
+    var plotH = cssHeight - padT - padB;
+    var colW = plotW / rows.length;
+
+    var maxOiIv = Math.max.apply(null, rows.map(function (r) { return Math.max(r.call_oiiv, r.put_oiiv); }).concat([1]));
+
+    ctx.strokeStyle = "#232a35";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(padL, cssHeight - padB); ctx.lineTo(cssWidth - padR, cssHeight - padB); ctx.stroke();
+
+    ctx.fillStyle = "#5b6472"; ctx.font = "10px " + getMonoFont(); ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (var g = 0; g <= 4; g++) {
+      var val = maxOiIv * g / 4;
+      var y = cssHeight - padB - (plotH * g / 4);
+      ctx.fillText(fmtLarge(val), padL - 8, y);
+    }
+
+    var bars = [];
+    rows.forEach(function (r, i) {
+      var x0 = padL + i * colW;
+      var barW = Math.max(colW * 0.38, 1);
+      var callH = (r.call_oiiv / maxOiIv) * plotH;
+      var putH = (r.put_oiiv / maxOiIv) * plotH;
+      ctx.fillStyle = "#1fa37b";
+      ctx.fillRect(x0 + colW * 0.06, cssHeight - padB - callH, barW, callH);
+      ctx.fillStyle = "#e0824a";
+      ctx.fillRect(x0 + colW * 0.52, cssHeight - padB - putH, barW, putH);
+
+      bars.push({ x: x0, y: padT, w: colW, h: plotH, strike: r.strike, call_oi: r.call_oi, put_oi: r.put_oi, call_iv: r.call_iv, put_iv: r.put_iv, net_gex: r.net_gex });
+
+      if (i % Math.max(Math.ceil(rows.length / 16), 1) === 0) {
+        ctx.save();
+        ctx.fillStyle = "#5b6472"; ctx.font = "9.5px " + getMonoFont();
+        ctx.translate(x0 + colW / 2, cssHeight - padB + 14);
+        ctx.rotate(-Math.PI / 5);
+        ctx.textAlign = "right";
+        ctx.fillText(fmtStrikeShort(r.strike), 0, 0);
+        ctx.restore();
+      }
+    });
+
+    function vline(strikeVal, color) {
+      if (strikeVal === null || strikeVal === undefined) return;
+      var idx = closestIndex(rows, strikeVal);
+      if (idx === -1) return;
+      var x = padL + idx * colW + colW / 2;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.22;
+      ctx.lineWidth = 7;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([6, 3]);
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
+      ctx.restore();
+    }
+    vline(levels.call_resistance, "#d6483f");
+    vline(levels.put_support, "#1fa37b");
+    vline(levels.hvl, "#e0c526");
+    vline(spot, "#808b9a");
+
+    setLevelLabel("oiiv-lvl-call-res", levels.call_resistance);
+    setLevelLabel("oiiv-lvl-put-sup", levels.put_support);
+    setLevelLabel("oiiv-lvl-hvl", levels.hvl);
+    setLevelLabel("oiiv-lvl-spot", spot);
+
+    // The bars alone only ever show OI x IV as one blended magnitude — the
+    // IV factor itself isn't visible anywhere without hovering a tooltip.
+    // Surface it directly in the title as an OI-weighted average across the
+    // strikes actually plotted, so "where's the IV" has an answer at a glance.
+    var ivNum = 0, ivDen = 0;
+    rows.forEach(function (r) {
+      if (r.call_iv) { ivNum += r.call_oi * r.call_iv; ivDen += r.call_oi; }
+      if (r.put_iv) { ivNum += r.put_oi * r.put_iv; ivDen += r.put_oi; }
+    });
+    var avgIvEl = document.getElementById("oiiv-avg-iv");
+    if (avgIvEl) {
+      avgIvEl.textContent = ivDen > 0 ? "· Avg IV " + (ivNum / ivDen * 100).toFixed(1) + "%" : "";
+    }
+
+    attachTooltip(canvas, tooltipEl, bars, function (b) {
+      return '<div style="color:#fff">Strike ' + fmtStrikeShort(b.strike) + '</div>' +
+        '<div style="color:' + (b.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: $' + fmtLarge(b.net_gex) + '</div>' +
+        '<div style="color:var(--pos)">Call OI×IV: ' + fmtLarge(b.call_oi * (b.call_iv || 0)) + (b.call_iv ? " (IV " + (b.call_iv * 100).toFixed(1) + "%)" : "") + '</div>' +
+        '<div style="color:var(--neg)">Put OI×IV: ' + fmtLarge(b.put_oi * (b.put_iv || 0)) + (b.put_iv ? " (IV " + (b.put_iv * 100).toFixed(1) + "%)" : "") + '</div>';
+    });
+  }
+
   // small strike-profile sparkline for expiration structure cards
   function drawMiniProfile(canvas, tooltipEl, profile, spot) {
     var dpr = window.devicePixelRatio || 1;
@@ -1751,44 +2125,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // 7. OI Concentration
-  // ---------------------------------------------------------------------
-  function renderOiConcentration(d) {
-    var c = d.oi_concentration;
-    function list(items) {
-      if (!items.length) return '<div class="loading-row">no data</div>';
-      return items.map(function (it, i) {
-        return '<div class="rank-row"><span><span class="rank-badge">' + (i + 1) + '</span>' + fmtStrike(it.strike) + '</span><span>' + fmtLarge(it.value) + ' OI</span></div>';
-      }).join("");
-    }
-    el.callOiConc.innerHTML = list(c.call_oi_top);
-    el.putOiConc.innerHTML = list(c.put_oi_top);
-  }
-
-  // ---------------------------------------------------------------------
-  // 8. GEX Concentration
-  // ---------------------------------------------------------------------
-  function renderGexConcentration(d) {
-    var g = d.gex_concentration;
-    var rows = [
-      ["Largest Positive GEX Strike", fmtStrike(g.largest_positive_gex_strike), "pos"],
-      ["Largest Negative GEX Strike", fmtStrike(g.largest_negative_gex_strike), "neg"],
-      ["Largest Absolute GEX Strike", fmtStrike(g.largest_absolute_gex_strike), ""],
-    ];
-    var html = rows.map(function (r) {
-      return '<div class="kv-row"><span class="k">' + r[0] + '</span><span class="v ' + r[2] + '">' + r[1] + '</span></div>';
-    }).join("");
-    html += '<div style="margin-top:8px">' +
-      '<div class="zone-row"><span style="color:var(--pos)">● Positive Gamma Zone</span><b>' +
-      (g.positive_gamma_zone ? fmtStrike(g.positive_gamma_zone[0]) + " – " + fmtStrike(g.positive_gamma_zone[1]) : "—") + '</b></div>' +
-      '<div class="zone-row"><span style="color:var(--neg)">● Negative Gamma Zone</span><b>' +
-      (g.negative_gamma_zone ? fmtStrike(g.negative_gamma_zone[0]) + " – " + fmtStrike(g.negative_gamma_zone[1]) : "—") + '</b></div>' +
-      '</div>';
-    el.gexConc.innerHTML = html;
-  }
-
-  // ---------------------------------------------------------------------
-  // 9. Gamma Regime
+  // 9. Gamma Regime (merged into the Key Levels card)
   // ---------------------------------------------------------------------
   function renderRegime(d) {
     var regime = d.market_summary.gamma_regime;
@@ -1801,39 +2138,6 @@
     el.regimeBadge.className = "regime-badge " + regime;
     el.regimeBadge.innerHTML = "<span>" + c.emoji + "</span><span>" + c.label + "</span>";
     el.regimeDesc.innerHTML = c.desc;
-  }
-
-  // ---------------------------------------------------------------------
-  // 11. Current Week vs Next Week
-  // ---------------------------------------------------------------------
-  function weekStats(profile) {
-    var pos = 0, neg = 0;
-    (profile || []).forEach(function (r) { if (r.net_gex >= 0) pos += r.net_gex; else neg += r.net_gex; });
-    return { pos: pos, neg: neg };
-  }
-
-  function renderWeekCompare(d) {
-    var cw = d.expiration_structure.current_week;
-    var nw = d.expiration_structure.next_week;
-    var cwStats = weekStats(cw.profile), nwStats = weekStats(nw.profile);
-    var maxAbs = Math.max(Math.abs(cwStats.pos), Math.abs(cwStats.neg), Math.abs(nwStats.pos), Math.abs(nwStats.neg), 1);
-
-    function card(label, block, stats, cls) {
-      return '<div class="compare-card ' + cls + '">' +
-        '<h3>' + label + '</h3>' +
-        '<div class="period">' + (block.period || "") + '</div>' +
-        '<div class="compare-bar-row"><div class="cbr-label"><span>Total GEX</span><span class="' + signClass(block.gex) + '">$' + fmtLarge(block.gex) + '</span></div>' +
-          '<div class="compare-bar-track"><div class="compare-bar-fill ' + signClass(block.gex) + '" style="width:' + (Math.min(Math.abs(block.gex) / maxAbs, 1) * 100) + '%"></div></div></div>' +
-        '<div class="compare-bar-row"><div class="cbr-label"><span>Positive GEX</span><span class="pos">$' + fmtLarge(stats.pos) + '</span></div>' +
-          '<div class="compare-bar-track"><div class="compare-bar-fill pos" style="width:' + (Math.min(stats.pos / maxAbs, 1) * 100) + '%"></div></div></div>' +
-        '<div class="compare-bar-row"><div class="cbr-label"><span>Negative GEX</span><span class="neg">$' + fmtLarge(stats.neg) + '</span></div>' +
-          '<div class="compare-bar-track"><div class="compare-bar-fill neg" style="width:' + (Math.min(Math.abs(stats.neg) / maxAbs, 1) * 100) + '%"></div></div></div>' +
-        '<div class="kv-row"><span class="k">Major Resistance</span><span class="v">' + fmtStrike(block.call_resistance) + '</span></div>' +
-        '<div class="kv-row"><span class="k">Major Support</span><span class="v">' + fmtStrike(block.put_support) + '</span></div>' +
-        '<div class="kv-row"><span class="k">HVL</span><span class="v">' + fmtStrike(block.hvl) + '</span></div>' +
-        '</div>';
-    }
-    el.weekCompare.innerHTML = card("CURRENT WEEK GEX", cw, cwStats, "current") + card("NEXT WEEK GEX", nw, nwStats, "next");
   }
 
   // ---------------------------------------------------------------------
@@ -1883,7 +2187,8 @@
   function populateExpSelect(d) {
     var opts = ['<option value="ALL">All Strikes — Net GEX (aggregate)</option>'];
     d.multi_expiration.forEach(function (e, i) {
-      opts.push('<option value="' + e.expiry_ms + '"' + (i === 0 ? " selected" : "") + '>' + e.expiration_date + '</option>');
+      var label = (i === 0 ? "0DTE — " : "") + e.expiration_date;
+      opts.push('<option value="' + e.expiry_ms + '"' + (i === 0 ? " selected" : "") + '>' + label + '</option>');
     });
     var prev = el.expSelect.value;
     el.expSelect.innerHTML = opts.join("");
@@ -1891,6 +2196,10 @@
       el.expSelect.value = prev;
     }
     selectedExpiryMs = el.expSelect.value;
+    if (el.gexMulti0dte) {
+      var first = d.multi_expiration[0];
+      el.gexMulti0dte.textContent = first ? "0DTE: " + first.expiration_date : "";
+    }
   }
 
   function currentExpEntry(d) {
@@ -1943,7 +2252,7 @@
       '<div><b>Last Updated</b> ' + now.toLocaleTimeString() + '</div>' +
       '<div>Market Data: ' + fmtTime(meta.market_data_ts) + '</div>' +
       '<div>GEX Data: ' + fmtTime(meta.gex_data_ts) + ' &nbsp;|&nbsp; OI Data: ' + fmtTime(meta.oi_data_ts) + '</div>';
-    el.footerNote.textContent = "Data sourced live from Deribit public API (options chain, DVOL, BTC-PERPETUAL). GEX/DEX derived via Black-Scholes using published mark IV — an approximation, not exchange-reported dealer positioning.";
+    el.footerNote.textContent = SYMBOL_CONFIG[currentSymbol].footerNote;
   }
 
   // ---------------------------------------------------------------------
@@ -1965,13 +2274,13 @@
     redrawGexChart();
     drawPriceChart(el.priceChart, el.priceTooltip, priceCandles, d.key_levels);
     drawOiChart(el.oiChart, el.oiTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
+    drawOiIvChart(el.oiIvChart, el.oiIvTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
     drawIntervalMap(el.intervalChart, el.intervalTooltip, liveGexHistory, d.key_levels.spot_price);
     renderExpirationStructure(d);
-    renderOiConcentration(d);
-    renderGexConcentration(d);
     renderRegime(d);
-    renderWeekCompare(d);
-    refreshInterpretation();
+    // BTC-only (no QQQ equivalent on the backend) — only fetch/show it while
+    // actually viewing BTC, so QQQ's default view never touches BTC data.
+    if (currentSymbol === "btc") refreshInterpretation();
     renderMeta(d);
 
     el.connDot.classList.remove("off");
@@ -1986,7 +2295,11 @@
     // this stay client-side (accumulateGexSnapshot) to avoid re-fetching
     // the whole 24h history every 30s poll.
     try {
-      var res = await fetch("/api/options/gex-profile-history?hours=24");
+      var cfg = SYMBOL_CONFIG[currentSymbol];
+      var qs = "hours=24" +
+        (cfg.gexSymbol ? "&symbol=" + encodeURIComponent(cfg.gexSymbol) : "") +
+        (cfg.gexExchange ? "&exchange=" + encodeURIComponent(cfg.gexExchange) : "");
+      var res = await fetch("/api/options/gex-profile-history?" + qs);
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       var byTs = {};
@@ -2004,7 +2317,11 @@
 
   async function refreshPriceHistory() {
     try {
-      var res = await fetch("/api/price/history?hours=24");
+      var cfg = SYMBOL_CONFIG[currentSymbol];
+      var qs = "hours=24" +
+        (cfg.priceSymbol ? "&symbol=" + encodeURIComponent(cfg.priceSymbol) : "") +
+        (cfg.priceExchange ? "&exchange=" + encodeURIComponent(cfg.priceExchange) : "");
+      var res = await fetch("/api/price/history?" + qs);
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       priceCandles = d.candles;
@@ -2026,7 +2343,22 @@
     var strikes = profile
       .filter(function (r) { return r.strike >= lo && r.strike <= hi; })
       .map(function (r) { return { strike: r.strike, net_gex: r.net_gex, call_gex: r.call_gex, put_gex: r.put_gex }; });
-    liveGexHistory.push({ ts: new Date().toISOString(), spot_price: spot, strikes: strikes });
+
+    // Bucketed to the minute (matches the X-axis's HH:MM format and
+    // fmtHHMM() tooltip): a poll landing in the same minute as the last one
+    // updates that bucket's bubble in place instead of adding a new,
+    // barely-offset one every ~30s poll. A new bubble only appears once the
+    // clock actually rolls into a new minute.
+    var bucket = new Date();
+    bucket.setSeconds(0, 0);
+    var bucketTs = bucket.toISOString();
+    var entry = { ts: bucketTs, spot_price: spot, strikes: strikes };
+    var lastEntry = liveGexHistory[liveGexHistory.length - 1];
+    if (lastEntry && lastEntry.ts === bucketTs) {
+      liveGexHistory[liveGexHistory.length - 1] = entry;
+    } else {
+      liveGexHistory.push(entry);
+    }
 
     var cutoff = Date.now() - GEX_HISTORY_RETENTION_MS;
     while (liveGexHistory.length && new Date(liveGexHistory[0].ts).getTime() < cutoff) {
@@ -2036,20 +2368,51 @@
   }
 
   async function refresh() {
+    var requestSymbol = currentSymbol; // guard against a toggle firing mid-fetch
     try {
-      var res = await fetch("/api/options/dashboard");
+      var res = await fetch(SYMBOL_CONFIG[requestSymbol].dashboardEndpoint);
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
+      if (requestSymbol !== currentSymbol) return; // user switched symbols while this was in flight
       await refreshPriceHistory();
+      if (requestSymbol !== currentSymbol) return;
       accumulateGexSnapshot(d);
       renderAll(d);
     } catch (e) {
+      if (requestSymbol !== currentSymbol) return;
       el.connDot.classList.add("off");
       el.errBanner.textContent = "Không thể tải dữ liệu Options: " + e.message + " — sẽ tự động thử lại.";
       el.errBanner.classList.add("show");
-      if (!latest) el.loadingRow.textContent = "Kết nối tới Deribit thất bại, đang thử lại…";
+      if (!latest) el.loadingRow.textContent = SYMBOL_CONFIG[requestSymbol].offlineText;
     }
   }
+
+  function applyBtcAvailability() {
+    var btcBtn = el.symbolToggle.querySelector('[data-symbol="btc"]');
+    if (!btcBtn) return;
+    btcBtn.disabled = !btcEnabled;
+    btcBtn.title = btcEnabled ? "" : "BTC is disabled on this server (BTC_ENABLE is off)";
+  }
+
+  function switchSymbol(sym) {
+    if (sym === "btc" && !btcEnabled) return; // server has BTC data collection turned off entirely
+    if (sym === currentSymbol || !SYMBOL_CONFIG[sym]) return;
+    currentSymbol = sym;
+    latest = null;
+    priceCandles = null;
+    liveGexHistory = loadGexHistoryFromStorage();
+    el.content.style.display = "none";
+    el.loadingRow.style.display = "block";
+    el.errBanner.classList.remove("show");
+    if (sym !== "btc") el.interpText.innerHTML = "<p>Không khả dụng cho QQQ.</p>";
+    applySymbolChrome();
+    backfillGexHistoryFromDb().then(refresh);
+  }
+
+  el.symbolToggle.addEventListener("click", function (e) {
+    var btn = e.target.closest(".symbol-btn");
+    if (btn) switchSymbol(btn.dataset.symbol);
+  });
 
   var resizeTimer = null;
   window.addEventListener("resize", function () {
@@ -2057,6 +2420,18 @@
     resizeTimer = setTimeout(function () { if (latest) renderAll(latest); }, 200);
   });
 
+  if (currentSymbol !== "btc") el.interpText.innerHTML = "<p>Không khả dụng cho QQQ.</p>";
+
+  // Fetch /api/config before anything ever tries to fetch BTC data, so a
+  // BTC_ENABLE=false server never gets a BTC request from this page — not
+  // even a reflexive one from a user clicking BTC before the flag lands.
+  fetch("/api/config")
+    .then(function (r) { return r.json(); })
+    .then(function (cfg) { btcEnabled = !!cfg.btc_enabled; })
+    .catch(function () { btcEnabled = false; })
+    .then(applyBtcAvailability);
+
+  applySymbolChrome();
   backfillGexHistoryFromDb().then(refresh);
   pollTimer = setInterval(refresh, REFRESH_MS);
 })();

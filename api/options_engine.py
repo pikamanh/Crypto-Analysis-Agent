@@ -24,6 +24,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from api.http_cache import cached_get as _cached_get_raw
+from api.greeks_engine import (
+    aggregate_by_strike as _aggregate_by_strike,
+    bs_delta,
+    bs_gamma,
+    expiry_block as _expiry_block,
+    fmt_expiry as _fmt_expiry,
+    gamma_flip as _gamma_flip,
+    gamma_regime as _gamma_regime,
+    key_levels as _key_levels,
+    positioning_block as _positioning_block,
+    profile_series as _profile_series,
+    top_n_abs_gex as _top_n_abs_gex,
+    top_n_by as _top_n_by,
+    week_bounds as _week_bounds,
+)
+
 logger = logging.getLogger(__name__)
 
 DERIBIT_BASE = "https://www.deribit.com/api/v2"
@@ -35,47 +52,22 @@ _CACHE: Dict[str, Tuple[float, Any]] = {}
 
 def _cached_get(url: str, params: dict, ttl: float) -> dict:
     key = url + "?" + "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    now = time.time()
-    hit = _CACHE.get(key)
-    if hit and now - hit[0] < ttl:
-        return hit[1]
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()["result"]
-    _CACHE[key] = (now, data)
-    return data
+
+    def fetch() -> dict:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        return resp.json()["result"]
+
+    return _cached_get_raw(_CACHE, key, ttl, fetch)
 
 
 # ---------------------------------------------------------------------------
 # Black-Scholes greeks (r=0, forward-style pricing consistent with Deribit)
 # ---------------------------------------------------------------------------
-
-def _norm_pdf(x: float) -> float:
-    return math.exp(-0.5 * x * x) / math.sqrt(2 * math.pi)
-
-
-def _norm_cdf(x: float) -> float:
-    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
-
-
-def _bs_d1(spot: float, strike: float, t_years: float, sigma: float) -> float:
-    return (math.log(spot / strike) + (RISK_FREE_RATE + 0.5 * sigma * sigma) * t_years) / (
-        sigma * math.sqrt(t_years)
-    )
-
-
-def bs_gamma(spot: float, strike: float, t_years: float, sigma: float) -> float:
-    if t_years <= 0 or sigma <= 0:
-        return 0.0
-    d1 = _bs_d1(spot, strike, t_years, sigma)
-    return _norm_pdf(d1) / (spot * sigma * math.sqrt(t_years))
-
-
-def bs_delta(spot: float, strike: float, t_years: float, sigma: float, is_call: bool) -> float:
-    if t_years <= 0 or sigma <= 0:
-        return 1.0 if (is_call and spot > strike) else (0.0 if is_call else (-1.0 if spot < strike else 0.0))
-    d1 = _bs_d1(spot, strike, t_years, sigma)
-    return _norm_cdf(d1) if is_call else _norm_cdf(d1) - 1.0
+# bs_gamma/bs_delta and the aggregation helpers imported above now live in
+# api/greeks_engine.py, shared with the QQQ/Nasdaq engine — this module just
+# supplies its own r=RISK_FREE_RATE (0.0) at each call site below instead of
+# relying on a module-global rate baked into the math functions.
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +146,8 @@ def _build_chain(spot: float) -> List[dict]:
         is_call = inst["option_type"] == "call"
         contract_size = float(inst.get("contract_size") or CONTRACT_SIZE)
 
-        gamma = bs_gamma(spot, strike, t_years, sigma)
-        delta = bs_delta(spot, strike, t_years, sigma, is_call)
+        gamma = bs_gamma(spot, strike, t_years, sigma, r=RISK_FREE_RATE)
+        delta = bs_delta(spot, strike, t_years, sigma, is_call, r=RISK_FREE_RATE)
 
         # Dollar gamma exposure per 1% spot move; calls contribute positive
         # dealer gamma, puts negative — the standard public-GEX convention.
@@ -218,197 +210,6 @@ def get_raw_chain_snapshot() -> Tuple[float, List[dict]]:
 
 
 # ---------------------------------------------------------------------------
-# Aggregation helpers
-# ---------------------------------------------------------------------------
-
-def _fmt_expiry(expiry_ms: int) -> str:
-    return datetime.fromtimestamp(expiry_ms / 1000, tz=timezone.utc).strftime("%d %b %Y")
-
-
-def _week_bounds(ref: datetime) -> Tuple[datetime, datetime]:
-    """Monday 00:00 UTC .. next Monday 00:00 UTC containing `ref`."""
-    start = (ref - timedelta(days=ref.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-    return start, start + timedelta(days=7)
-
-
-def _gamma_flip(rows: List[dict], spot: float) -> Optional[float]:
-    """True zero-gamma / HVL level: the underlying price at which *total*
-    dealer gamma exposure crosses zero.
-
-    Each option's gamma depends on the underlying price via moneyness, so the
-    flip point cannot be read off GEX computed at today's spot — it requires
-    re-pricing gamma for every strike across a grid of hypothetical spot
-    levels and finding where the aggregate switches sign. This is the same
-    method public GEX trackers (e.g. SpotGamma) use for their "Gamma Flip" /
-    "HVL" line.
-    """
-    if not rows:
-        return None
-
-    strikes = [r["strike"] for r in rows]
-    lo, hi = min(spot * 0.5, min(strikes)), max(spot * 1.5, max(strikes))
-    steps = 300
-    grid = [lo + (hi - lo) * i / steps for i in range(steps + 1)]
-
-    totals = []
-    for s in grid:
-        total = 0.0
-        for r in rows:
-            g = bs_gamma(s, r["strike"], r["t_years"], r["iv"])
-            dollar_gamma = g * r["oi"] * r["contract_size"] * s * s * 0.01
-            total += dollar_gamma if r["is_call"] else -dollar_gamma
-        totals.append(total)
-
-    crossings = []
-    for i in range(len(grid) - 1):
-        t0, t1 = totals[i], totals[i + 1]
-        if t0 == 0:
-            crossings.append(grid[i])
-        elif (t0 < 0) != (t1 < 0):
-            frac = t0 / (t0 - t1)
-            crossings.append(grid[i] + frac * (grid[i + 1] - grid[i]))
-
-    if not crossings:
-        # gamma never flips sign across the scanned range (e.g. one-sided
-        # book) — fall back to the price with smallest |total gamma|.
-        return min(zip(grid, totals), key=lambda gt: abs(gt[1]))[0]
-
-    # multiple crossings can occur with lumpy OI; the tradable one is the
-    # one nearest today's spot.
-    return min(crossings, key=lambda c: abs(c - spot))
-
-
-def _key_levels(strike_rows: Dict[float, dict], spot: float, rows: Optional[List[dict]] = None) -> dict:
-    """Derive call resistance / put support / HVL / max-GEX / max-OI strikes
-    from a per-strike aggregation. `strike_rows` maps strike -> aggregated dict
-    with keys: net_gex, call_gex, put_gex, call_oi, put_oi. `rows` (raw,
-    per-instrument) is used for the HVL/gamma-flip scan when supplied.
-    """
-    if not strike_rows:
-        return {
-            "call_resistance": None, "put_support": None, "hvl": None,
-            "max_gex_strike": None, "max_call_oi_strike": None, "max_put_oi_strike": None,
-        }
-
-    strikes_sorted = sorted(strike_rows.keys())
-
-    # Call resistance: strike at/above spot with the largest *net* GEX bar —
-    # matches the net_gex bars actually drawn on the chart. Using call-side
-    # GEX alone (ignoring that strike's put contribution) can pick a strike
-    # that isn't the tallest bar on screen whenever call/put OI overlap at
-    # the same strike.
-    above = [k for k in strikes_sorted if k >= spot]
-    call_resistance = max(above, key=lambda k: strike_rows[k]["net_gex"]) if above else None
-
-    # Put support: strike at/below spot with the most negative *net* GEX bar
-    # — same reasoning, kept consistent with the plotted net_gex column
-    # rather than the isolated put_gex figure.
-    below = [k for k in strikes_sorted if k <= spot]
-    put_support = min(below, key=lambda k: strike_rows[k]["net_gex"]) if below else None
-
-    # HVL ("hedge vol level" / zero-gamma flip): the underlying price where
-    # *total* dealer gamma exposure crosses zero, found by re-pricing gamma
-    # across a grid of hypothetical spot levels (see `_gamma_flip`). Snapped
-    # to the nearest strike so it lines up with the strike-bucketed chart.
-    if rows:
-        flip_price = _gamma_flip(rows, spot)
-        hvl = min(strikes_sorted, key=lambda k: abs(k - flip_price)) if flip_price is not None else None
-    else:
-        hvl = None
-    if hvl is None:
-        hvl = min(strikes_sorted, key=lambda k: abs(strike_rows[k]["net_gex"]))
-
-    max_gex_strike = max(strikes_sorted, key=lambda k: abs(strike_rows[k]["net_gex"]))
-    max_call_oi_strike = max(strikes_sorted, key=lambda k: strike_rows[k]["call_oi"])
-    max_put_oi_strike = max(strikes_sorted, key=lambda k: strike_rows[k]["put_oi"])
-
-    return {
-        "call_resistance": call_resistance,
-        "put_support": put_support,
-        "hvl": hvl,
-        "max_gex_strike": max_gex_strike,
-        "max_call_oi_strike": max_call_oi_strike,
-        "max_put_oi_strike": max_put_oi_strike,
-    }
-
-
-def _aggregate_by_strike(rows: List[dict]) -> Dict[float, dict]:
-    agg: Dict[float, dict] = defaultdict(lambda: {"net_gex": 0.0, "call_oi": 0.0, "put_oi": 0.0, "call_gex": 0.0, "put_gex": 0.0})
-    for r in rows:
-        a = agg[r["strike"]]
-        a["net_gex"] += r["gex"]
-        if r["is_call"]:
-            a["call_oi"] += r["oi"]
-            a["call_gex"] += r["gex"]
-        else:
-            a["put_oi"] += r["oi"]
-            a["put_gex"] += r["gex"]
-    return dict(agg)
-
-
-def _profile_series(strike_rows: Dict[float, dict]) -> List[dict]:
-    return [
-        {
-            "strike": k,
-            "net_gex": v["net_gex"],
-            "call_gex": v["call_gex"],
-            "put_gex": v["put_gex"],
-            "call_oi": v["call_oi"],
-            "put_oi": v["put_oi"],
-        }
-        for k, v in sorted(strike_rows.items())
-    ]
-
-
-def _positioning_block(rows_for_expiry: List[dict], strike_rows: Dict[float, dict]) -> dict:
-    total_oi = sum(r["oi"] for r in rows_for_expiry)
-    total_gex = sum(v["net_gex"] for v in strike_rows.values())
-    total_dex = sum(r["dex"] for r in rows_for_expiry)
-    call_oi = sum(r["oi"] for r in rows_for_expiry if r["is_call"])
-    put_oi = sum(r["oi"] for r in rows_for_expiry if not r["is_call"])
-    call_gex = sum(v["call_gex"] for v in strike_rows.values())
-    put_gex = sum(v["put_gex"] for v in strike_rows.values())
-    call_dex = sum(r["dex"] for r in rows_for_expiry if r["is_call"])
-    put_dex = sum(r["dex"] for r in rows_for_expiry if not r["is_call"])
-    return {
-        "total_oi": total_oi,
-        "total_gex": total_gex,
-        "total_dex": total_dex,
-        "call_oi": call_oi,
-        "put_oi": put_oi,
-        "put_call_oi_ratio": (put_oi / call_oi) if call_oi else None,
-        "put_call_gex_ratio": (put_gex / call_gex) if call_gex else None,
-        "put_call_dex_ratio": (put_dex / call_dex) if call_dex else None,
-    }
-
-
-def _expiry_block(rows_for_expiry: List[dict], spot: float, total_gex_all: float, label: str, expiry_ms: Optional[int] = None,
-                   period_label: Optional[str] = None) -> dict:
-    strike_rows = _aggregate_by_strike(rows_for_expiry)
-    levels = _key_levels(strike_rows, spot, rows_for_expiry)
-    total_gex = sum(v["net_gex"] for v in strike_rows.values())
-    gex_expiring_pct = (abs(total_gex) / abs(total_gex_all) * 100.0) if total_gex_all else 0.0
-
-    out = {
-        "label": label,
-        "gex": total_gex,
-        "gex_expiring_pct": gex_expiring_pct,
-        "call_resistance": levels["call_resistance"],
-        "put_support": levels["put_support"],
-        "hvl": levels["hvl"],
-        "spot": spot,
-        "profile": _profile_series(strike_rows),
-    }
-    if expiry_ms is not None:
-        out["expiration_date"] = _fmt_expiry(expiry_ms)
-        remaining = expiry_ms / 1000.0 - time.time()
-        out["time_to_expiration_hours"] = max(remaining, 0.0) / 3600.0
-    if period_label is not None:
-        out["period"] = period_label
-    return out
-
-
-# ---------------------------------------------------------------------------
 # Vol metrics
 # ---------------------------------------------------------------------------
 
@@ -435,39 +236,6 @@ def _historical_volatility_30d() -> Optional[float]:
     var = sum((x - mean) ** 2 for x in log_returns) / max(n - 1, 1)
     daily_stdev = math.sqrt(var)
     return daily_stdev * math.sqrt(365) * 100.0
-
-
-def _gamma_regime(total_gex: float, total_abs_gex: float) -> str:
-    if total_abs_gex == 0:
-        return "neutral"
-    ratio = total_gex / total_abs_gex
-    if ratio > 0.08:
-        return "positive"
-    if ratio < -0.08:
-        return "negative"
-    return "neutral"
-
-
-def _top_n_by(strike_rows: Dict[float, dict], key: str, n: int = 3) -> List[dict]:
-    ranked = sorted(strike_rows.items(), key=lambda kv: kv[1][key], reverse=True)[:n]
-    return [{"strike": k, "value": v[key]} for k, v in ranked]
-
-
-def _top_n_abs_gex(strike_rows: Dict[float, dict], n: int = 10) -> List[dict]:
-    """Top strikes ranked by |net GEX| — the public "GEX Level" leaderboard."""
-    ranked = sorted(strike_rows.items(), key=lambda kv: abs(kv[1]["net_gex"]), reverse=True)[:n]
-    return [
-        {
-            "rank": i + 1,
-            "strike": k,
-            "net_gex": v["net_gex"],
-            "call_gex": v["call_gex"],
-            "put_gex": v["put_gex"],
-            "call_oi": v["call_oi"],
-            "put_oi": v["put_oi"],
-        }
-        for i, (k, v) in enumerate(ranked)
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +267,7 @@ def get_options_dashboard() -> dict:
     total_put_volume = sum(r["volume"] for r in rows if not r["is_call"])
     top10_gex = _top_n_abs_gex(strike_rows_all, 10)
 
-    levels = _key_levels(strike_rows_all, spot, rows)
+    levels = _key_levels(strike_rows_all, spot, rows, r=RISK_FREE_RATE)
     gamma_regime = _gamma_regime(total_gex, total_abs_gex)
 
     # Expirations, sorted by time.
@@ -518,7 +286,7 @@ def get_options_dashboard() -> dict:
     )
     zero_dte_rows = rows_by_expiry.get(zero_dte_expiry, []) if zero_dte_expiry is not None else []
     zero_dte_strike_rows = _aggregate_by_strike(zero_dte_rows)
-    zero_dte_levels = _key_levels(zero_dte_strike_rows, spot, zero_dte_rows)
+    zero_dte_levels = _key_levels(zero_dte_strike_rows, spot, zero_dte_rows, r=RISK_FREE_RATE)
     expiring_gex = sum(v["net_gex"] for v in zero_dte_strike_rows.values())
 
     # Deribit settles daily options at 08:00 UTC — the closest crypto analogue to
@@ -529,11 +297,11 @@ def get_options_dashboard() -> dict:
     next_settlement_ms = int(next_settlement.timestamp() * 1000)
 
     first_expiration = (
-        _expiry_block(rows_by_expiry[first_expiry], spot, total_gex, "First Expiration", first_expiry)
+        _expiry_block(rows_by_expiry[first_expiry], spot, total_gex, "First Expiration", first_expiry, r=RISK_FREE_RATE)
         if first_expiry else None
     )
     next_expiration = (
-        _expiry_block(rows_by_expiry[next_expiry], spot, total_gex, "Next Expiration", next_expiry)
+        _expiry_block(rows_by_expiry[next_expiry], spot, total_gex, "Next Expiration", next_expiry, r=RISK_FREE_RATE)
         if next_expiry else None
     )
 
@@ -550,10 +318,12 @@ def get_options_dashboard() -> dict:
     current_week = _expiry_block(
         current_week_rows, spot, total_gex, "Current Week",
         period_label=f"{cur_week_start.strftime('%d %b')} – {(cur_week_end - timedelta(days=1)).strftime('%d %b %Y')}",
+        r=RISK_FREE_RATE,
     )
     next_week = _expiry_block(
         next_week_rows, spot, total_gex, "Next Week",
         period_label=f"{next_week_start.strftime('%d %b')} – {(next_week_end - timedelta(days=1)).strftime('%d %b %Y')}",
+        r=RISK_FREE_RATE,
     )
 
     call_oi_top = _top_n_by(strike_rows_all, "call_oi", 3)
@@ -579,7 +349,7 @@ def get_options_dashboard() -> dict:
     for exp_ms in expiry_set:
         exp_rows = rows_by_expiry[exp_ms]
         exp_strike_rows = _aggregate_by_strike(exp_rows)
-        exp_levels = _key_levels(exp_strike_rows, spot, exp_rows)
+        exp_levels = _key_levels(exp_strike_rows, spot, exp_rows, r=RISK_FREE_RATE)
         multi_expiration.append(
             {
                 "expiration_date": _fmt_expiry(exp_ms),

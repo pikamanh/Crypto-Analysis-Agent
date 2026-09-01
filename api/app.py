@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from api.options_engine import get_options_dashboard
+from api.qqq_options_engine import get_qqq_options_dashboard
 
 load_dotenv()
 
@@ -28,6 +29,15 @@ app = FastAPI(title="Crypto Options Dashboard API", version="1.0.0")
 _liquidation_listener = None
 _market_data_listener = None
 _ingest_task: asyncio.Task | None = None
+
+
+def _btc_enabled() -> bool:
+    """BTC_ENABLE env var gate — "true"/"1"/"yes"/"on" (case-insensitive)
+    turns BTC data collection AND every BTC-only endpoint on; anything else
+    (including unset) keeps BTC fully dark: no Binance/Deribit listeners or
+    polling (see data.ingest.BTC_ENABLED), and every BTC endpoint below
+    404s instead of touching Binance/Deribit. QQQ is unaffected either way."""
+    return os.environ.get("BTC_ENABLE", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 @app.on_event("startup")
@@ -50,12 +60,15 @@ async def start_ingest() -> None:
     from data.sources.binance import LiquidationListener, MarketDataListener
 
     init_db()
-    _liquidation_listener = LiquidationListener(on_event=on_liquidation)
-    await _liquidation_listener.start()
-    _market_data_listener = MarketDataListener(on_candle_closed=on_candle_closed)
-    await _market_data_listener.start()
+    if _btc_enabled():
+        _liquidation_listener = LiquidationListener(on_event=on_liquidation)
+        await _liquidation_listener.start()
+        _market_data_listener = MarketDataListener(on_candle_closed=on_candle_closed)
+        await _market_data_listener.start()
+        logger.info("data ingest started (poll loop + BTC liquidation listener + BTC market data listener)")
+    else:
+        logger.info("BTC_ENABLE is off — data ingest started with QQQ pollers only, no BTC listeners")
     _ingest_task = asyncio.create_task(poll_loop())
-    logger.info("data ingest started (poll loop + liquidation listener + market data listener)")
 
 
 @app.on_event("shutdown")
@@ -81,8 +94,22 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/config", include_in_schema=False)
+def config() -> dict:
+    """Lets the frontend know which symbols it's allowed to fetch/show
+    before it makes any BTC calls — see SYMBOL_CONFIG / btcEnabled in
+    index.html. QQQ is always enabled."""
+    return {"btc_enabled": _btc_enabled()}
+
+
+def _require_btc_enabled() -> None:
+    if not _btc_enabled():
+        raise HTTPException(status_code=404, detail="BTC is disabled (set BTC_ENABLE=true to enable).")
+
+
 @app.get("/api/options/dashboard", include_in_schema=False)
 def options_dashboard() -> dict:
+    _require_btc_enabled()
     try:
         return get_options_dashboard()
     except Exception as exc:
@@ -90,24 +117,38 @@ def options_dashboard() -> dict:
         raise HTTPException(status_code=502, detail=f"Upstream options data unavailable: {exc}")
 
 
+@app.get("/api/options/qqq-dashboard", include_in_schema=False)
+def qqq_options_dashboard() -> dict:
+    try:
+        return get_qqq_options_dashboard()
+    except Exception as exc:
+        logger.exception("Failed to build QQQ options dashboard.")
+        raise HTTPException(status_code=502, detail=f"Upstream options data unavailable: {exc}")
+
+
 @app.get("/api/price/history", include_in_schema=False)
-def price_history(hours: int = 24) -> dict:
+def price_history(hours: int = 24, symbol: str | None = None, exchange: str | None = None) -> dict:
     if not os.environ.get("DATABASE_URL"):
         raise HTTPException(status_code=502, detail="Price history unavailable: DATABASE_URL not set.")
 
     from data.db import fetch_ohlcv
-    from data.sources.binance import EXCHANGE, SYMBOL
+    from data.sources.binance import EXCHANGE as DEFAULT_EXCHANGE, SYMBOL as DEFAULT_SYMBOL
+
+    symbol = symbol or DEFAULT_SYMBOL
+    exchange = exchange or DEFAULT_EXCHANGE
+    if symbol == DEFAULT_SYMBOL and exchange == DEFAULT_EXCHANGE:
+        _require_btc_enabled()
 
     try:
-        candles = fetch_ohlcv(SYMBOL, EXCHANGE, hours=min(max(hours, 1), 168))
-        return {"symbol": SYMBOL, "exchange": EXCHANGE, "candles": candles}
+        candles = fetch_ohlcv(symbol, exchange, hours=min(max(hours, 1), 168))
+        return {"symbol": symbol, "exchange": exchange, "candles": candles}
     except Exception as exc:
         logger.exception("Failed to fetch OHLCV price history.")
         raise HTTPException(status_code=502, detail=f"Price history unavailable: {exc}")
 
 
 @app.get("/api/options/gex-profile-history", include_in_schema=False)
-def gex_profile_history(hours: int = 24) -> dict:
+def gex_profile_history(hours: int = 24, symbol: str | None = None, exchange: str | None = None) -> dict:
     """Backs the GEX Interval Map's one-time backfill on page load — fills
     in whatever the server ingested while no browser tab was open, since the
     map's ongoing live updates are still accumulated client-side (see
@@ -117,11 +158,16 @@ def gex_profile_history(hours: int = 24) -> dict:
         raise HTTPException(status_code=502, detail="GEX profile history unavailable: DATABASE_URL not set.")
 
     from data.db import fetch_gex_profile_history
-    from data.sources.deribit import EXCHANGE, SYMBOL
+    from data.sources.deribit import EXCHANGE as DEFAULT_EXCHANGE, SYMBOL as DEFAULT_SYMBOL
+
+    symbol = symbol or DEFAULT_SYMBOL
+    exchange = exchange or DEFAULT_EXCHANGE
+    if symbol == DEFAULT_SYMBOL and exchange == DEFAULT_EXCHANGE:
+        _require_btc_enabled()
 
     try:
-        snapshots = fetch_gex_profile_history(SYMBOL, EXCHANGE, hours=min(max(hours, 1), 24))
-        return {"symbol": SYMBOL, "exchange": EXCHANGE, "snapshots": snapshots}
+        snapshots = fetch_gex_profile_history(symbol, exchange, hours=min(max(hours, 1), 24))
+        return {"symbol": symbol, "exchange": exchange, "snapshots": snapshots}
     except Exception as exc:
         logger.exception("Failed to fetch GEX profile history.")
         raise HTTPException(status_code=502, detail=f"GEX profile history unavailable: {exc}")
@@ -129,6 +175,11 @@ def gex_profile_history(hours: int = 24) -> dict:
 
 @app.get("/api/options/interpretation", include_in_schema=False)
 def options_interpretation() -> dict:
+    # BTC-only (agents.option_agent.analyze_option_data hardcodes
+    # get_options_dashboard, no QQQ equivalent) — gate like the other
+    # BTC endpoints rather than let it hit Deribit while BTC is disabled.
+    _require_btc_enabled()
+
     # Lazy import: builds an OpenAI client at import time, which would crash
     # startup if OPENAI_API_KEY isn't set.
     from agents.option_agent import analyze_option_data
