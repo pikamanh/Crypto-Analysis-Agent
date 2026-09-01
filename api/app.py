@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 from api.options_engine import get_options_dashboard
 from api.qqq_options_engine import get_qqq_options_dashboard
@@ -25,6 +26,11 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Crypto Options Dashboard API", version="1.0.0")
+# The dashboard HTML + its JSON payloads (GEX profile history, OHLCV) are
+# mostly repetitive text/JSON, so gzip cuts transfer size a lot — smaller
+# responses mean a visibly faster first paint, especially over a slow/mobile
+# connection or right after a Render free-tier cold start.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 _liquidation_listener = None
 _market_data_listener = None
@@ -57,10 +63,14 @@ async def start_ingest() -> None:
 
     from data.db import init_db
     from data.ingest import poll_loop, on_liquidation, on_candle_closed
-    from data.sources.binance import LiquidationListener, MarketDataListener
 
     init_db()
     if _btc_enabled():
+        # Deferred until here: pulls in the Binance SDK (aiohttp, websockets,
+        # pycryptodome, binance-common), real memory weight on a 512MB
+        # instance, so it never loads at all while BTC is off.
+        from data.sources.binance import LiquidationListener, MarketDataListener
+
         _liquidation_listener = LiquidationListener(on_event=on_liquidation)
         await _liquidation_listener.start()
         _market_data_listener = MarketDataListener(on_candle_closed=on_candle_closed)

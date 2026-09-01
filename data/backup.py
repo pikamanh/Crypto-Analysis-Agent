@@ -50,10 +50,8 @@ def _dump_database(dump_path: Path) -> None:
 
 def _truncate_raw_tables() -> None:
     tables_sql = ", ".join(RAW_TABLES)
-    conn = get_conn()
-    with conn, conn.cursor() as cur:
+    with get_conn() as conn, conn.cursor() as cur:
         cur.execute(f"TRUNCATE TABLE {tables_sql}")
-    conn.close()
     logger.info("truncated: %s", tables_sql)
 
 

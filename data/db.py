@@ -3,25 +3,58 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, Sequence
 
 import psycopg2
+from psycopg2 import pool as _pg_pool
 from psycopg2.extras import execute_values
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
+# Aiven requires sslmode=require, so every fresh psycopg2.connect() pays a
+# real TCP+TLS handshake — noticeable both on user-facing dashboard requests
+# and on the ~60s ingest ticks that used to open-and-close a connection each
+# time. A small pool keeps a handful of connections warm instead, which is
+# also lighter on RAM than repeatedly spinning up new connection objects.
+# ThreadedConnectionPool because ingest ticks run via asyncio.to_thread, so
+# multiple threads can be checking connections in/out concurrently.
+_POOL: _pg_pool.ThreadedConnectionPool | None = None
+_POOL_MIN = 1
+_POOL_MAX = 5
 
+
+def _get_pool() -> _pg_pool.ThreadedConnectionPool:
+    global _POOL
+    if _POOL is None:
+        _POOL = _pg_pool.ThreadedConnectionPool(_POOL_MIN, _POOL_MAX, DATABASE_URL)
+    return _POOL
+
+
+@contextmanager
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    """Checks out a pooled connection rather than opening a new one.
+    Mirrors the commit-on-success/rollback-on-exception behavior callers
+    used to get from `with psycopg2.connect(...) as conn:`, then always
+    returns the connection to the pool (never closes it) on exit."""
+    conn = _get_pool().getconn()
+    try:
+        yield conn
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+    finally:
+        _get_pool().putconn(conn)
 
 
 def init_db() -> None:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(_SCHEMA_PATH.read_text())
-    conn.close()
 
 
 def fetch_ohlcv(symbol: str, exchange: str, hours: int) -> list[dict]:
@@ -36,7 +69,6 @@ def fetch_ohlcv(symbol: str, exchange: str, hours: int) -> list[dict]:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(query, (symbol, exchange, hours))
         rows = cur.fetchall()
-    conn.close()
     return [
         {
             "ts": ts.isoformat(),
@@ -65,7 +97,6 @@ def fetch_gex_profile_history(symbol: str, exchange: str, hours: int) -> list[di
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(query, (symbol, exchange, hours))
         rows = cur.fetchall()
-    conn.close()
     return [
         {"ts": ts.isoformat(), "spot_price": float(spot), "strikes": profile}
         for ts, spot, profile in rows
@@ -81,7 +112,6 @@ def prune_gex_profile_history(older_than_hours: int = 24) -> None:
     query = "SELECT drop_chunks('feature_gex_profile_snapshot', older_than => (%s || ' hours')::interval)"
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(query, (older_than_hours,))
-    conn.close()
 
 
 def insert_rows(
@@ -104,5 +134,4 @@ def insert_rows(
         query += " ON CONFLICT DO NOTHING"
     with get_conn() as conn, conn.cursor() as cur:
         execute_values(cur, query, rows)
-    conn.close()
     return len(rows)

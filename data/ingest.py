@@ -40,13 +40,19 @@ from psycopg2.extras import Json
 load_dotenv()
 
 from data.db import init_db, insert_rows, prune_gex_profile_history  # noqa: E402
-from data.sources import binance, deribit, nasdaq, yahoo  # noqa: E402
-from data.sources.binance import BinanceBannedError, BinanceStreamNotReadyError  # noqa: E402
+from data.sources import nasdaq, yahoo  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 BTC_ENABLED = os.environ.get("BTC_ENABLE", "false").strip().lower() in ("1", "true", "yes", "on")
+
+# `binance`/`deribit` pull in the Binance SDK (aiohttp, websockets,
+# pycryptodome, binance-common) — real memory weight on a 512MB Render
+# instance. Only imported when BTC_ENABLED, and only inside the functions
+# below that actually touch them (all of which are only ever scheduled when
+# BTC_ENABLED is true — see poll_loop/main), so the whole dependency chain
+# stays out of the process entirely while BTC is off.
 
 OHLCV_FUTURES_INTERVAL_SECONDS = 60
 OPTIONS_CHAIN_INTERVAL_SECONDS = 60
@@ -74,6 +80,8 @@ def on_candle_closed(candle: dict) -> None:
     MarketDataListener) instead of the poll loop, so a closed candle lands
     in the DB within milliseconds rather than waiting up to a minute for
     the next futures-snapshot poll tick."""
+    from data.sources import binance
+
     try:
         candle = dict(candle, symbol=binance.SYMBOL, exchange=binance.EXCHANGE)
         insert_rows("raw_ohlcv", OHLCV_COLUMNS, [_row_values(candle, OHLCV_COLUMNS)])
@@ -82,6 +90,9 @@ def on_candle_closed(candle: dict) -> None:
 
 
 def poll_futures_snapshot() -> None:
+    from data.sources import binance
+    from data.sources.binance import BinanceBannedError, BinanceStreamNotReadyError
+
     try:
         futures = binance.fetch_futures_snapshot()
         insert_rows("raw_futures_snapshot", FUTURES_COLUMNS, [_row_values(futures, FUTURES_COLUMNS)])
@@ -97,6 +108,8 @@ def poll_options_snapshot() -> None:
     feature_gex_profile_snapshot (full chain, JSONB, 24h retention — backs
     the GEX Interval Map) — combined so this costs one Deribit poll per
     tick instead of two."""
+    from data.sources import deribit
+
     try:
         feature_rows, profile_row = deribit.fetch_snapshot_rows()
         n1 = insert_rows(
@@ -203,6 +216,8 @@ async def main() -> None:
     listener = None
     market_data = None
     if BTC_ENABLED:
+        from data.sources import binance
+
         logger.info("BTC_ENABLE is on — starting liquidation + market data listeners")
         listener = binance.LiquidationListener(on_event=on_liquidation)
         await listener.start()
