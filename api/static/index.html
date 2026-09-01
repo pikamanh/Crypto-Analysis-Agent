@@ -2366,7 +2366,14 @@
     saveGexHistoryToStorage();
   }
 
+  var refreshInFlight = false; // guard against setInterval stacking another
+  // refresh() on top of one that's still waiting on a slow response — left
+  // unguarded, a slow backend meant a growing pile of concurrent identical
+  // requests instead of just one slow one.
+
   async function refresh() {
+    if (refreshInFlight) return;
+    refreshInFlight = true;
     var requestSymbol = currentSymbol; // guard against a toggle firing mid-fetch
     try {
       var res = await fetch(SYMBOL_CONFIG[requestSymbol].dashboardEndpoint);
@@ -2383,6 +2390,8 @@
       el.errBanner.textContent = "Không thể tải dữ liệu Options: " + e.message + " — sẽ tự động thử lại.";
       el.errBanner.classList.add("show");
       if (!latest) el.loadingRow.textContent = SYMBOL_CONFIG[requestSymbol].offlineText;
+    } finally {
+      refreshInFlight = false;
     }
   }
 
