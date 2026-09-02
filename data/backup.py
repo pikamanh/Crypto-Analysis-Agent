@@ -34,13 +34,33 @@ RAW_TABLES = ["raw_ohlcv", "raw_futures_snapshot", "feature_gex_snapshot", "raw_
 DUMP_DIR = Path(os.getenv("BACKUP_DUMP_DIR", "/tmp"))
 
 
+def _chunk_tables(tables: list[str]) -> list[str]:
+    """RAW_TABLES are TimescaleDB hypertables: the rows physically live in
+    per-interval child tables under _timescaledb_internal (e.g.
+    _hyper_1_68_chunk), not in the hypertable "root" itself. `pg_dump -t
+    raw_ohlcv` only matches that root name, so without this it silently
+    dumps zero rows no matter how much data actually exists — pg_dump
+    doesn't know to follow a hypertable to its chunks the way it follows
+    declarative partitioning. Resolve the real chunk relations right
+    before dumping so they can be passed to pg_dump explicitly."""
+    with get_conn() as conn, conn.cursor() as cur:
+        chunks: list[str] = []
+        for t in tables:
+            cur.execute("SELECT show_chunks(%s)", (t,))
+            chunks.extend(row[0] for row in cur.fetchall())
+        return chunks
+
+
 def _dump_database(dump_path: Path) -> None:
     database_url = os.environ["DATABASE_URL"]
+    chunk_tables = _chunk_tables(RAW_TABLES)
+    logger.info("resolved %d chunk table(s) for %s", len(chunk_tables), RAW_TABLES)
     cmd = [
         "pg_dump", database_url,
         "-Fc",  # custom format: compressed, restorable with pg_restore
         "-f", str(dump_path),
         *[arg for t in RAW_TABLES for arg in ("-t", t)],
+        *[arg for t in chunk_tables for arg in ("-t", t)],
     ]
     logger.info("running pg_dump -> %s", dump_path)
     result = subprocess.run(cmd, capture_output=True, text=True)
