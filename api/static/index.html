@@ -2295,7 +2295,13 @@
     // the whole 24h history every 30s poll.
     try {
       var cfg = SYMBOL_CONFIG[currentSymbol];
-      var qs = "hours=24" +
+      // Only ask the server for what liveGexHistory will actually keep
+      // (GEX_HISTORY_RETENTION_MS, filtered below) — asking for 24h here
+      // and then immediately discarding all but the last 6h meant pulling
+      // the full ~24h of full-chain profile snapshots (tens of MB from a
+      // remote DB) just to throw most of it away.
+      var backfillHours = Math.ceil(GEX_HISTORY_RETENTION_MS / (60 * 60 * 1000));
+      var qs = "hours=" + backfillHours +
         (cfg.gexSymbol ? "&symbol=" + encodeURIComponent(cfg.gexSymbol) : "") +
         (cfg.gexExchange ? "&exchange=" + encodeURIComponent(cfg.gexExchange) : "");
       var res = await fetch("/api/options/gex-profile-history?" + qs);
