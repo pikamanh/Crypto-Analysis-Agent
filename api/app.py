@@ -4,10 +4,11 @@ FastAPI app serving the BTC options dashboard + its LLM interpretation.
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -102,6 +103,67 @@ def health() -> dict:
     even as the dashboard page grows. Point external uptime/cron pings here,
     not at "/" (which returns the full dashboard HTML)."""
     return {"status": "ok"}
+
+
+# How stale feature_gex_snapshot's latest row can get before /api/ingest/
+# freshness calls a stream dead. Ticks land every OPTIONS_CHAIN_INTERVAL_
+# SECONDS (60s, see data/ingest.py) regardless of market hours, so 5 minutes
+# is several missed ticks' worth of slack for a slow upstream poll or a
+# transient retry — enough to not false-alarm on a blip, tight enough to
+# catch a genuinely dead poll loop within a few minutes of it happening.
+_INGEST_STALE_AFTER_SECONDS = 5 * 60
+
+
+def _stream_freshness(symbol: str, exchange: str) -> dict:
+    from data.db import fetch_latest_ingest_ts
+
+    last_ts = fetch_latest_ingest_ts(symbol, exchange)
+    if last_ts is None:
+        return {"symbol": symbol, "exchange": exchange, "last_ts": None, "age_seconds": None, "stale": True}
+    age_seconds = (datetime.now(timezone.utc) - last_ts).total_seconds()
+    return {
+        "symbol": symbol,
+        "exchange": exchange,
+        "last_ts": last_ts.isoformat(),
+        "age_seconds": round(age_seconds),
+        "stale": age_seconds > _INGEST_STALE_AFTER_SECONDS,
+    }
+
+
+@app.get("/api/ingest/freshness", include_in_schema=False)
+def ingest_freshness(response: Response) -> dict:
+    """Canary for the in-process poll loop actually still ticking.
+
+    Unlike /health (deliberately DB-free, for lightweight uptime pings),
+    this hits Postgres to check feature_gex_snapshot's latest row per
+    stream. That table is written on every tick unconditionally — unlike
+    raw_ohlcv, which only grows during market hours when Yahoo/Nasdaq
+    actually hand back a new candle — so its age is the one signal that
+    can't be explained away by "market's closed".
+
+    This matters most on a serverless deploy (Vercel): the ingest loop is
+    started from a FastAPI startup event and rides on the serverless
+    instance happening to stay warm between requests — there's no
+    guarantee of that the way there is on an always-on process, and when
+    the instance is recycled the loop dies with no error surfaced
+    anywhere else. Point a separate external monitor here (not /health) to
+    get alerted when that happens instead of noticing from a gap in the
+    charts."""
+    if not os.environ.get("DATABASE_URL"):
+        return {"ingest_enabled": False}
+
+    from data.sources.nasdaq import EXCHANGE as QQQ_EXCHANGE, SYMBOL as QQQ_SYMBOL
+
+    streams = {"qqq": _stream_freshness(QQQ_SYMBOL, QQQ_EXCHANGE)}
+    if _btc_enabled():
+        from data.sources.deribit import EXCHANGE as BTC_EXCHANGE, SYMBOL as BTC_SYMBOL
+
+        streams["btc"] = _stream_freshness(BTC_SYMBOL, BTC_EXCHANGE)
+
+    ok = all(not s["stale"] for s in streams.values())
+    if not ok:
+        response.status_code = 503
+    return {"ingest_enabled": True, "ok": ok, "streams": streams}
 
 
 @app.get("/api/config", include_in_schema=False)

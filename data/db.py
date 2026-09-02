@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -101,6 +102,20 @@ def fetch_gex_profile_history(symbol: str, exchange: str, hours: int) -> list[di
         {"ts": ts.isoformat(), "spot_price": float(spot), "strikes": profile}
         for ts, spot, profile in rows
     ]
+
+
+def fetch_latest_ingest_ts(symbol: str, exchange: str) -> datetime | None:
+    """Latest feature_gex_snapshot row for `symbol`/`exchange`. That table
+    gets a write every ingest tick unconditionally (unlike raw_ohlcv, which
+    only grows when the upstream actually has a new candle to offer), so
+    its age is the most reliable canary for "is the poll loop actually
+    still running" — see /api/ingest/freshness in api/app.py. Returns None
+    if the stream has never ingested a row."""
+    query = "SELECT max(ts) FROM feature_gex_snapshot WHERE symbol = %s AND exchange = %s"
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(query, (symbol, exchange))
+        (ts,) = cur.fetchone()
+    return ts
 
 
 def prune_gex_profile_history(older_than_hours: int = 24) -> None:
