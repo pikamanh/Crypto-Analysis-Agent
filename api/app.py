@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -164,6 +164,53 @@ def ingest_freshness(response: Response) -> dict:
     if not ok:
         response.status_code = 503
     return {"ingest_enabled": True, "ok": ok, "streams": streams}
+
+
+@app.post("/api/ingest/tick", include_in_schema=False)
+def ingest_tick(x_cron_secret: str | None = Header(default=None, alias="X-Cron-Secret")) -> dict:
+    """Runs one ingest cycle synchronously and returns — the stateless
+    counterpart to start_ingest's in-process poll_loop.
+
+    On an always-on host (Render) the startup loop is enough: it just keeps
+    ticking for the life of the process. On Vercel it isn't — a serverless
+    instance freezes right after the response goes out, so the loop only
+    advances on the odd chance a request happens to land while it's warm,
+    which is why data stalls the moment nobody visits and only catches up
+    once someone does (see ingest_freshness above for the full story).
+
+    Point an external cron (e.g. cron-job.org, once a minute — Vercel's own
+    Cron Jobs only run daily on the Hobby plan) at this endpoint instead, so
+    ingestion runs on a schedule independent of traffic. Requires
+    INGEST_CRON_SECRET to be set and sent back as X-Cron-Secret, since this
+    triggers real upstream fetches (Nasdaq/Deribit/Yahoo) and DB writes and
+    shouldn't be left open to anyone who finds the URL."""
+    secret = os.environ.get("INGEST_CRON_SECRET")
+    if not secret:
+        raise HTTPException(status_code=503, detail="INGEST_CRON_SECRET not configured")
+    if x_cron_secret != secret:
+        raise HTTPException(status_code=401, detail="invalid or missing X-Cron-Secret")
+    if not os.environ.get("DATABASE_URL"):
+        return {"ingest_enabled": False}
+
+    from data import ingest
+
+    ran = []
+    ingest.poll_qqq_price_snapshot()
+    ran.append("qqq_price")
+    ingest.poll_qqq_options_snapshot()
+    ran.append("qqq_options")
+    if _btc_enabled():
+        # Deribit/Nasdaq/Yahoo pollers are plain REST, so a stateless tick
+        # covers them. Binance's liquidation feed and 1m kline stream
+        # (on_liquidation/on_candle_closed) are WebSocket-only — there's no
+        # REST equivalent to tick — so BTC OHLCV/liquidations still depend
+        # on start_ingest's persistent listeners and won't self-heal here.
+        ingest.poll_futures_snapshot()
+        ran.append("btc_futures")
+        ingest.poll_options_snapshot()
+        ran.append("btc_options")
+    ingest.prune_options_gex_profile()
+    return {"ok": True, "ran": ran}
 
 
 @app.get("/api/config", include_in_schema=False)
