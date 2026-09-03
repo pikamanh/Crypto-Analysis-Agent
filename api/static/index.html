@@ -56,6 +56,13 @@
   .symbol-btn.active { background: var(--accent, #3aa0ff); border-color: var(--accent, #3aa0ff); color: #0a0e14; }
   .symbol-btn:disabled { opacity: .4; cursor: not-allowed; }
   .symbol-btn:disabled:hover { color: var(--text-muted); border-color: var(--border); }
+  .copy-key-level-btn {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .02em;
+    padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted); cursor: pointer; margin-left: 4px;
+  }
+  .copy-key-level-btn:hover { color: var(--text); border-color: var(--text-dim); }
+  .copy-key-level-btn.copied { color: var(--pos); border-color: var(--pos); }
   .meta-block { text-align: right; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-dim); line-height: 1.6; }
   .meta-block b { color: var(--text-muted); }
 
@@ -273,6 +280,7 @@
       <div class="symbol-toggle" id="symbol-toggle">
         <button type="button" class="symbol-btn" data-symbol="btc">BTC</button>
         <button type="button" class="symbol-btn active" data-symbol="qqq">QQQ</button>
+        <button type="button" class="copy-key-level-btn" id="copy-key-level-btn" title="Copy key levels — locked to the last snapshot taken before 9:15am ET once the market session opens">Copy key level</button>
       </div>
       <div class="meta-block" id="meta-block">
         <div><b>Last Updated</b> —</div>
@@ -675,6 +683,7 @@
     pageTitle: document.getElementById("page-title"),
     pageSub: document.getElementById("page-sub"),
     symbolToggle: document.getElementById("symbol-toggle"),
+    copyKeyLevelBtn: document.getElementById("copy-key-level-btn"),
     priceSectionTitle: document.getElementById("price-section-title"),
     priceChartTitle: document.getElementById("price-chart-title"),
     priceChartSub: document.getElementById("price-chart-sub"),
@@ -2326,8 +2335,126 @@
   // ---------------------------------------------------------------------
   // Main render + fetch loop
   // ---------------------------------------------------------------------
+  // "Copy key level" — freezes at 9:15am ET
+  //
+  // Key levels tick every poll, but the button is meant to hand out the
+  // levels as they stood right before the US cash session's 9:15am ET
+  // pre-open mark — once that time passes, the snapshot must stay fixed
+  // for the rest of the trading day even though the underlying levels
+  // keep moving minute to minute. So: every render before 9:15am ET
+  // overwrites a per-symbol, per-trading-day snapshot in localStorage;
+  // once 9:15am ET has passed we stop overwriting it, so whatever was
+  // last written just before the cutoff is what the button keeps
+  // returning until the next trading day resets it.
+  var KEY_LEVEL_FREEZE_HOUR_ET = 9;
+  var KEY_LEVEL_FREEZE_MINUTE_ET = 15;
+
+  function getEtParts() {
+    var fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+    var parts = {};
+    fmt.formatToParts(new Date()).forEach(function (p) { parts[p.type] = p.value; });
+    return parts;
+  }
+  function getEtDateKey() {
+    var p = getEtParts();
+    return p.year + "-" + p.month + "-" + p.day;
+  }
+  function isBeforeKeyLevelFreezeEt() {
+    var p = getEtParts();
+    // Intl reports midnight as "24" in some engines — normalize to 0.
+    var hour = parseInt(p.hour, 10) % 24;
+    var minutesSinceMidnight = hour * 60 + parseInt(p.minute, 10);
+    return minutesSinceMidnight < (KEY_LEVEL_FREEZE_HOUR_ET * 60 + KEY_LEVEL_FREEZE_MINUTE_ET);
+  }
+  function keyLevelSnapshotStorageKey(symbol) {
+    return "keyLevelSnapshot." + symbol + ".v1";
+  }
+  function updateKeyLevelSnapshot(symbol, d) {
+    // Never touch the stored snapshot once the freeze cutoff has passed —
+    // that's the whole point, it must stop changing at 9:15am ET.
+    if (!isBeforeKeyLevelFreezeEt()) return;
+    try {
+      var snap = { date: getEtDateKey(), keyLevels: d.key_levels, gexLevels: d.gex_levels };
+      localStorage.setItem(keyLevelSnapshotStorageKey(symbol), JSON.stringify(snap));
+    } catch (e) {
+      // localStorage unavailable (private mode, quota) — copy button falls
+      // back to live data below, just without the freeze guarantee.
+    }
+  }
+  function getFrozenKeyLevelSnapshot(symbol) {
+    try {
+      var raw = localStorage.getItem(keyLevelSnapshotStorageKey(symbol));
+      if (!raw) return null;
+      var snap = JSON.parse(raw);
+      if (snap.date !== getEtDateKey()) return null; // stale — different trading day
+      return snap;
+    } catch (e) {
+      return null;
+    }
+  }
+  function fmtLevelNum(n) {
+    if (n === null || n === undefined || isNaN(n)) return "—";
+    var rounded = Math.round(n * 100) / 100;
+    return String(rounded);
+  }
+  function buildKeyLevelClipboardText(symbol) {
+    var cfg = SYMBOL_CONFIG[symbol];
+    var snap = getFrozenKeyLevelSnapshot(symbol);
+    var k, gexRows;
+    if (snap) {
+      k = snap.keyLevels;
+      gexRows = snap.gexLevels;
+    } else if (latest && currentSymbol === symbol) {
+      // No pre-9:15am snapshot exists yet for today (e.g. the tab was
+      // opened after the freeze) — fall back to whatever is live so the
+      // button still does something useful instead of silently no-op'ing.
+      k = latest.key_levels;
+      gexRows = latest.gex_levels;
+    } else {
+      return null;
+    }
+    var parts = [
+      "Call Resistance", fmtLevelNum(k.call_resistance),
+      "Put Support", fmtLevelNum(k.put_support),
+      "HVL", fmtLevelNum(k.hvl !== undefined ? k.hvl : k.high_vol_level),
+      "1D Min", fmtLevelNum(k.day_min),
+      "1D Max", fmtLevelNum(k.day_max),
+      "Call Resistance 0DTE", fmtLevelNum(k.call_resistance_0dte),
+      "Put Support 0DTE", fmtLevelNum(k.put_support_0dte),
+      "HVL 0DTE", fmtLevelNum(k.high_vol_level_0dte),
+      "Gamma Wall 0DTE", fmtLevelNum(k.gamma_wall_0dte),
+    ];
+    (gexRows || []).slice(0, 10).forEach(function (r, i) {
+      parts.push("GEX " + (i + 1), fmtLevelNum(r.strike));
+    });
+    return "$" + cfg.label + ": " + parts.join(", ");
+  }
+  async function copyKeyLevelToClipboard() {
+    var text = buildKeyLevelClipboardText(currentSymbol);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // Clipboard API unavailable/blocked — nothing else to fall back to
+      // here without a visible textarea hack; just skip the "copied" flash.
+      return;
+    }
+    el.copyKeyLevelBtn.textContent = "Copied!";
+    el.copyKeyLevelBtn.classList.add("copied");
+    setTimeout(function () {
+      el.copyKeyLevelBtn.textContent = "Copy key level";
+      el.copyKeyLevelBtn.classList.remove("copied");
+    }, 1500);
+  }
+
+  // ---------------------------------------------------------------------
   function renderAll(d) {
     latest = d;
+    updateKeyLevelSnapshot(currentSymbol, d);
 
     // Charts measure canvas.parentElement.clientWidth to size themselves,
     // so the content container must be visible (not display:none) before
@@ -2516,6 +2643,7 @@
     var btn = e.target.closest(".symbol-btn");
     if (btn) switchSymbol(btn.dataset.symbol);
   });
+  el.copyKeyLevelBtn.addEventListener("click", copyKeyLevelToClipboard);
 
   var resizeTimer = null;
   window.addEventListener("resize", function () {
