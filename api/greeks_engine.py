@@ -282,14 +282,13 @@ def expiry_block(rows_for_expiry: List[dict], spot: float, total_gex_all: float,
 
 
 def gamma_regime(total_gex: float, total_abs_gex: float) -> str:
+    # Two-state only: dealers are net long gamma (positive) or net short
+    # gamma (negative) — no "neutral" middle band. total_gex's own sign
+    # decides it; total_abs_gex only guards the pathological all-zero case
+    # (no rows at all) where sign is meaningless.
     if total_abs_gex == 0:
-        return "neutral"
-    ratio = total_gex / total_abs_gex
-    if ratio > 0.08:
         return "positive"
-    if ratio < -0.08:
-        return "negative"
-    return "neutral"
+    return "positive" if total_gex >= 0 else "negative"
 
 
 def top_n_by(strike_rows: Dict[float, dict], key: str, n: int = 3) -> List[dict]:

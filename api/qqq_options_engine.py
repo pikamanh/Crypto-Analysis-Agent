@@ -357,7 +357,6 @@ def _compute_qqq_options_dashboard() -> dict:
     top10_gex = _top_n_abs_gex(strike_rows_all, 10)
 
     levels = _key_levels(strike_rows_all, spot, rows, r=RISK_FREE_RATE)
-    gamma_regime = _gamma_regime(total_gex, total_abs_gex)
 
     expiry_set = sorted({row["expiry_ms"] for row in rows})
     rows_by_expiry: Dict[int, List[dict]] = defaultdict(list)
@@ -375,6 +374,12 @@ def _compute_qqq_options_dashboard() -> dict:
     zero_dte_strike_rows = _aggregate_by_strike(zero_dte_rows)
     zero_dte_levels = _key_levels(zero_dte_strike_rows, spot, zero_dte_rows, r=RISK_FREE_RATE)
     expiring_gex = sum(v["net_gex"] for v in zero_dte_strike_rows.values())
+    expiring_abs_gex = sum(abs(v["net_gex"]) for v in zero_dte_strike_rows.values())
+    # Regime badge reads the 0DTE book specifically (dealers' same-day hedging
+    # pressure), not the total_gex across every listed expiration — a huge
+    # positive back-month position can otherwise mask a negative 0DTE book
+    # that's what's actually driving today's price action.
+    gamma_regime = _gamma_regime(expiring_gex, expiring_abs_gex)
 
     # QQQ/OPRA options settle at market close, ~20:00 UTC (4pm ET, EDT
     # approximation — see _parse_expiry_strike). Once it passes, 0DTE rolls

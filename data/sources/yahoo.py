@@ -78,6 +78,53 @@ def _rows_from_chart_result(result: dict) -> List[dict]:
     return rows
 
 
+def _fetch_chart(params: Dict[str, Any], cache_key: str) -> List[dict]:
+    def fetch() -> List[dict]:
+        resp = requests.get(CHART_URL, params=params, headers=REQUEST_HEADERS, timeout=10)
+        resp.raise_for_status()
+        payload = resp.json()
+        chart = payload.get("chart") or {}
+        result = chart.get("result")
+        if not result:
+            raise RuntimeError(f"Yahoo chart API returned no result: {chart.get('error')}")
+        return _rows_from_chart_result(result[0])
+
+    return _cached_get_raw(_CACHE, cache_key, ttl=45, fetch_fn=fetch)
+
+
+def fetch_ohlcv(interval: str = "1m", range_: str = "1d") -> List[dict]:
+    """Candles for QQQ from Yahoo's chart API at any interval, oldest first.
+
+    General form behind fetch_ohlcv_1m (see its docstring for why the poll
+    loop pins interval="1m", range_="1d"). Also used standalone by
+    scripts/backfill_qqq_ohlcv.py for one-off history pulls at coarser
+    intervals (1h/1d), which aren't subject to that same "don't repopulate
+    truncated history" constraint since they write to CSV, not raw_ohlcv.
+
+    Note: for interval="1m" specifically, Yahoo rejects any `range_` beyond
+    "5d" with a 422 ("Only 8 days worth of 1m granularity data are allowed
+    to be fetched per request") even though ~30 days of 1m history exists
+    overall — see fetch_ohlcv_1m_history for paging around that per-request cap.
+    """
+    params = {"range": range_, "interval": interval, "includePrePost": "false"}
+    return _fetch_chart(params, cache_key=f"ohlcv:{interval}:{range_}")
+
+
+def fetch_ohlcv_1m_history(period1: int, period2: int) -> List[dict]:
+    """1-minute candles for an explicit [period1, period2) unix-second
+    window, oldest first — the `range_` shorthand fetch_ohlcv() uses can't
+    express this because Yahoo caps any single 1m request at 8 days
+    regardless of the range value requested (see fetch_ohlcv's docstring).
+    scripts/backfill_qqq_ohlcv.py calls this in <=7-day chunks to page back
+    through the ~30 days of 1m history Yahoo actually retains.
+    """
+    params = {
+        "period1": period1, "period2": period2,
+        "interval": "1m", "includePrePost": "false",
+    }
+    return _fetch_chart(params, cache_key=f"ohlcv:1m:{period1}:{period2}")
+
+
 def fetch_ohlcv_1m(range_: str = "1d") -> List[dict]:
     """1-minute candles for QQQ from Yahoo's chart API, oldest first.
 
@@ -90,18 +137,4 @@ def fetch_ohlcv_1m(range_: str = "1d") -> List[dict]:
     to enforce. The cost: a cold ingest start (or a gap from the process
     being asleep) only backfills the current session, not prior days.
     """
-    def fetch() -> List[dict]:
-        resp = requests.get(
-            CHART_URL,
-            params={"range": range_, "interval": "1m", "includePrePost": "false"},
-            headers=REQUEST_HEADERS, timeout=10,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        chart = payload.get("chart") or {}
-        result = chart.get("result")
-        if not result:
-            raise RuntimeError(f"Yahoo chart API returned no result: {chart.get('error')}")
-        return _rows_from_chart_result(result[0])
-
-    return _cached_get_raw(_CACHE, f"ohlcv:{range_}", ttl=45, fetch_fn=fetch)
+    return fetch_ohlcv(interval="1m", range_=range_)
