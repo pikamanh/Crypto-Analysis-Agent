@@ -337,6 +337,10 @@
               <span><i class="swatch line" style="border-color:var(--text-dim)"></i> 1D Min <b id="price-lvl-day-min"></b></span>
               <span><i class="swatch line" style="border-color:#c77dff"></i> IV (30D) <b id="price-lvl-iv"></b></span>
             </div>
+            <!-- The IV (30D) mini-panel is drawn inside price-chart itself, in
+                 the dead space below the lowest price gridline — it shares
+                 the same canvas and the same xAt() time mapping as the price
+                 series rather than living in a separate chart-wrap. -->
             <div class="chart-wrap">
               <canvas class="chart" id="price-chart" height="420"></canvas>
               <div class="chart-tooltip" id="price-tooltip"></div>
@@ -511,7 +515,13 @@
 (function () {
   "use strict";
 
-  var REFRESH_MS = 30000;
+  // 60s instead of 30s: the GEX Interval Map's snapshot (options chain +
+  // full Black-Scholes greeks solve) is the slowest thing this poll
+  // triggers, and on the deployed (slower/throttled) box it sometimes
+  // doesn't finish inside a 30s window — the next poll fires on top of it,
+  // and the interval map ends up with gaps. A 60s cadence gives it enough
+  // room to always land a snapshot per tick.
+  var REFRESH_MS = 60000;
   // Shared canvas height for the Price chart and GEX Interval Map — they sit
   // side by side in the same panel-grid row, so they must visualize at the
   // same scale instead of two different hardcoded heights.
@@ -1332,12 +1342,19 @@
     });
     if (!visible.length) visible = candles;
 
-    // padR reserves room for the IV (30D) axis labels on the right side —
-    // kept fixed (not conditional on ivHistory having data yet) so the
-    // chart doesn't jump width the moment the first IV point lands.
-    var padL = 74, padR = 54, padT = 12, padB = 26;
+    var padL = 74, padR = 24, padT = 12, padB = 26;
     var plotW = cssWidth - padL - padR;
     var plotH = cssHeight - padT - padB;
+
+    // The price band (+/-1% around the latest price, see below) leaves a lot
+    // of the plot area empty at the bottom in practice, so a chunk of that
+    // height is carved off as a fixed IV (30D) sub-panel instead of sitting
+    // unused — it shares this canvas, the same padL/padR/xAt, and sits right
+    // above the time-axis labels.
+    var ivGap = 6;
+    var ivBandH = Math.min(96, Math.max(64, plotH * 0.24));
+    var pricePlotH = plotH - ivBandH - ivGap;
+    var ivBandTop = padT + pricePlotH + ivGap;
 
     // Y-axis tracks a fixed +/-1% band around the current (latest) price
     // instead of stretching to fit the whole visible range + every level —
@@ -1352,25 +1369,7 @@
     // candle actually renders as empty space instead of being squeezed out
     // by an index-based layout.
     function xAt(t) { return padL + (t - priceView.tLo) / (priceView.tHi - priceView.tLo) * plotW; }
-    function yAt(p) { return padT + (1 - (p - lo) / (hi - lo)) * plotH; }
-
-    // IV (30D) overlay: its own right-side Y-axis, scaled to whatever range
-    // of IV values fall inside the current time window — unlike price, IV
-    // has no natural "current +/-1%" band, so this just fits what's visible
-    // with a little headroom instead.
-    var visibleIv = (ivHistory || []).filter(function (s) {
-      var t = new Date(s.ts).getTime();
-      return t >= priceView.tLo && t <= priceView.tHi && s.iv !== null && s.iv !== undefined;
-    });
-    var ivLo = null, ivHi = null;
-    if (visibleIv.length) {
-      var ivVals = visibleIv.map(function (s) { return s.iv; });
-      ivLo = Math.min.apply(null, ivVals);
-      ivHi = Math.max.apply(null, ivVals);
-      if (ivLo === ivHi) { ivLo -= 1; ivHi += 1; } // flat series — avoid a zero-span axis
-      else { var ivPad = (ivHi - ivLo) * 0.15; ivLo -= ivPad; ivHi += ivPad; }
-    }
-    function yAtIv(v) { return padT + (1 - (v - ivLo) / (ivHi - ivLo)) * plotH; }
+    function yAt(p) { return padT + (1 - (p - lo) / (hi - lo)) * pricePlotH; }
 
     ctx.strokeStyle = "#1b212a";
     ctx.lineWidth = 1;
@@ -1381,7 +1380,7 @@
     // Nice round-number price gridlines (like the Interval Map's real-strike
     // rows) instead of raw quartile interpolation, with tick density scaled
     // to the available plot height.
-    var targetTicks = Math.max(3, Math.round(plotH / 60));
+    var targetTicks = Math.max(3, Math.round(pricePlotH / 60));
     var rawStep = (hi - lo) / targetTicks;
     var mag = Math.pow(10, Math.floor(Math.log10(rawStep || 1)));
     var norm = rawStep / mag;
@@ -1390,20 +1389,6 @@
       var y = yAt(p);
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
       ctx.fillText(fmtUsd0(p), padL - 8, y);
-    }
-
-    // IV right-side axis ticks — labels only (no gridlines, to avoid
-    // clashing visually with the price gridlines already drawn above).
-    if (visibleIv.length) {
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "#c77dff";
-      var ivTicks = Math.max(2, Math.min(5, Math.round(plotH / 60)));
-      for (var ivI = 0; ivI <= ivTicks; ivI++) {
-        var ivVal = ivLo + (ivHi - ivLo) * (ivI / ivTicks);
-        ctx.fillText(fmtPct(ivVal, 1), cssWidth - padR + 8, yAtIv(ivVal));
-      }
-      ctx.fillStyle = "#5b6472";
     }
 
     ctx.textAlign = "center";
@@ -1423,17 +1408,6 @@
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
-
-    if (visibleIv.length) {
-      ctx.strokeStyle = "#c77dff";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      visibleIv.forEach(function (s, i) {
-        var x = xAt(new Date(s.ts).getTime()), y = yAtIv(s.iv);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    }
 
     function hline(val, color, dash) {
       if (val === null || val === undefined || val < lo || val > hi) return;
@@ -1465,21 +1439,110 @@
     var ivLabelEl = document.getElementById("price-lvl-iv");
     if (ivLabelEl) ivLabelEl.textContent = fmtPct(levels.implied_volatility_30d_pct, 2);
 
-    var points = visible.map(function (c) {
-      // Nearest IV point (by timestamp) carried along per-candle so the
-      // tooltip can show "what was IV around this time" even though price
-      // candles (1m) and IV samples (~1 per poll) don't share timestamps.
-      var t = new Date(c.ts).getTime();
-      var nearestIv = null, bestIvDist = Infinity;
-      visibleIv.forEach(function (s) {
-        var dist = Math.abs(new Date(s.ts).getTime() - t);
-        if (dist < bestIvDist) { bestIvDist = dist; nearestIv = s.iv; }
+    // ---- IV (30D) sub-panel -------------------------------------------
+    // Drawn in the band carved out below the price plot (ivBandTop..
+    // ivBandTop+ivBandH), sharing xAt() so it scrubs/pans/zooms in lockstep
+    // with the price line above it. Y-axis uses 5 fixed relative ticks
+    // (10/25/50/75/90% of the visible window's local IV range) rather than
+    // the price plot's "nice round number" scheme, since IV has no natural
+    // round units the way price does.
+    var ivSeries = (ivHistory || []).filter(function (s) { return s.iv !== null && s.iv !== undefined; });
+    var ivPoints = [];
+
+    // Divider between the price plot and the IV band — drawn solid and a
+    // shade brighter than the regular gridlines so the two panels read as
+    // clearly separate at a glance, not just IV bleeding into dead space.
+    ctx.save();
+    ctx.strokeStyle = "#3a4553";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(padL, ivBandTop); ctx.lineTo(cssWidth - padR, ivBandTop); ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, ivBandTop + 1, cssWidth, ivBandH - 1);
+    ctx.clip();
+
+    ctx.font = "9px " + getMonoFont();
+    ctx.fillStyle = "#c77dff";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText("IV (30D)", padL, ivBandTop + 3);
+
+    var ivVisible = ivSeries.filter(function (s) {
+      var t = new Date(s.ts).getTime();
+      return t >= priceView.tLo && t <= priceView.tHi;
+    });
+    if (!ivVisible.length) {
+      ctx.font = "10px " + getMonoFont();
+      ctx.fillStyle = "#5b6472";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("No IV history yet", padL + plotW / 2, ivBandTop + ivBandH / 2 + 4);
+    } else {
+      var ivVals = ivVisible.map(function (s) { return s.iv; });
+      var ivLo = Math.min.apply(null, ivVals), ivHi = Math.max.apply(null, ivVals);
+      if (ivLo === ivHi) { ivLo -= 1; ivHi += 1; } else { var ivPad = (ivHi - ivLo) * 0.1; ivLo -= ivPad; ivHi += ivPad; }
+
+      function yIvAt(v) { return ivBandTop + (1 - (v - ivLo) / (ivHi - ivLo)) * ivBandH; }
+
+      ctx.font = "9px " + getMonoFont();
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      [0.10, 0.25, 0.50, 0.75, 0.90].forEach(function (frac) {
+        var v = ivLo + frac * (ivHi - ivLo);
+        var y = yIvAt(v);
+        ctx.strokeStyle = "#1b212a";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
+        ctx.fillStyle = "#5b6472";
+        ctx.fillText(fmtPct(v, 1), padL - 8, y);
       });
-      return { x: xAt(t), y: yAt(c.close), candle: c, iv: nearestIv };
+
+      ivPoints = ivVisible.map(function (s) {
+        return { x: xAt(new Date(s.ts).getTime()), y: yIvAt(s.iv), s: s };
+      });
+
+      ctx.beginPath();
+      ivPoints.forEach(function (p, i) { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      ctx.lineTo(ivPoints[ivPoints.length - 1].x, ivBandTop + ivBandH);
+      ctx.lineTo(ivPoints[0].x, ivBandTop + ivBandH);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(199,125,255,0.12)";
+      ctx.fill();
+
+      ctx.strokeStyle = "#c77dff";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ivPoints.forEach(function (p, i) { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    var points = visible.map(function (c) {
+      return { x: xAt(new Date(c.ts).getTime()), y: yAt(c.close), candle: c };
     });
     canvas.onmousemove = function (e) {
       var rect = canvas.getBoundingClientRect();
-      var mx = e.clientX - rect.left;
+      var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      if (my >= ivBandTop && ivPoints.length) {
+        var ivNearest = null, ivBestDist = Infinity;
+        ivPoints.forEach(function (pt) {
+          var dist = Math.abs(pt.x - mx);
+          if (dist < ivBestDist) { ivBestDist = dist; ivNearest = pt; }
+        });
+        if (ivNearest && ivBestDist < 20) {
+          tooltipEl.innerHTML = '<div style="color:#fff">' + fmtHHMM(new Date(ivNearest.s.ts)) + '</div>' +
+            '<div style="color:#c77dff">IV: ' + fmtPct(ivNearest.s.iv, 2) + '</div>';
+          tooltipEl.style.left = Math.min(ivNearest.x + 14, rect.width - 130) + "px";
+          tooltipEl.style.top = Math.max(ivNearest.y - 26, 0) + "px";
+          tooltipEl.classList.add("show");
+        } else {
+          tooltipEl.classList.remove("show");
+        }
+        return;
+      }
       var nearest = null, bestDist = Infinity;
       points.forEach(function (pt) {
         var dist = Math.abs(pt.x - mx);
@@ -1488,8 +1551,7 @@
       if (nearest && bestDist < 20) {
         var c = nearest.candle;
         tooltipEl.innerHTML = '<div style="color:#fff">' + fmtHHMM(new Date(c.ts)) + '</div>' +
-          '<div>Close: ' + fmtUsd0(c.close) + '</div>' +
-          (nearest.iv !== null ? '<div style="color:#c77dff">IV: ' + fmtPct(nearest.iv, 2) + '</div>' : '');
+          '<div>Close: ' + fmtUsd0(c.close) + '</div>';
         tooltipEl.style.left = Math.min(nearest.x + 14, rect.width - 150) + "px";
         tooltipEl.style.top = Math.max(nearest.y - 30, 0) + "px";
         tooltipEl.classList.add("show");
@@ -2209,9 +2271,8 @@
     var conf = {
       positive: { emoji: "🟢", label: "POSITIVE GAMMA", desc: "Dealers ước tính đang ở vị thế long gamma ròng. Hoạt động hedging trong trạng thái này có xu hướng mua khi giá giảm và bán khi giá tăng, thường gắn với biến động realized thấp hơn và giá dao động trong biên độ." },
       negative: { emoji: "🟠", label: "NEGATIVE GAMMA", desc: "Dealers ước tính đang ở vị thế short gamma ròng. Hoạt động hedging trong trạng thái này có xu hướng bán khi giá giảm và mua khi giá tăng, thường gắn với biến động realized cao hơn và biến động giá có thể khuếch đại theo hướng đang di chuyển." },
-      neutral: { emoji: "⚪", label: "NEUTRAL GAMMA", desc: "Gamma exposure ròng hiện gần vùng trung tính, chưa cho thấy thiên hướng hedging rõ rệt về phía nào. Positioning có thể chuyển trạng thái khi giá tiến gần các mức GEX lớn." },
     };
-    var c = conf[regime] || conf.neutral;
+    var c = conf[regime] || conf.positive;
     el.regimeBadge.className = "regime-badge " + regime;
     el.regimeBadge.innerHTML = "<span>" + c.emoji + "</span><span>" + c.label + "</span>";
     el.regimeDesc.innerHTML = c.desc;

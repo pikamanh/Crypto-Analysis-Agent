@@ -277,7 +277,6 @@ def _compute_options_dashboard() -> dict:
     top10_gex = _top_n_abs_gex(strike_rows_all, 10)
 
     levels = _key_levels(strike_rows_all, spot, rows, r=RISK_FREE_RATE)
-    gamma_regime = _gamma_regime(total_gex, total_abs_gex)
 
     # Expirations, sorted by time.
     expiry_set = sorted({r["expiry_ms"] for r in rows})
@@ -297,6 +296,11 @@ def _compute_options_dashboard() -> dict:
     zero_dte_strike_rows = _aggregate_by_strike(zero_dte_rows)
     zero_dte_levels = _key_levels(zero_dte_strike_rows, spot, zero_dte_rows, r=RISK_FREE_RATE)
     expiring_gex = sum(v["net_gex"] for v in zero_dte_strike_rows.values())
+    expiring_abs_gex = sum(abs(v["net_gex"]) for v in zero_dte_strike_rows.values())
+    # Regime badge reads the 0DTE book specifically (dealers' same-day hedging
+    # pressure), not total_gex across every listed expiration — see the QQQ
+    # engine's identical note.
+    gamma_regime = _gamma_regime(expiring_gex, expiring_abs_gex)
 
     # Deribit settles daily options at 08:00 UTC — the closest crypto analogue to
     # equities' EOD/RTH close. Once it passes, 0DTE naturally rolls to the next

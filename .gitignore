@@ -13,3 +13,4 @@ alert/alerts.jsonl
 scheduler/KILL_SWITCH
 agents/.option_cache.json
 *.dump
+data/history/

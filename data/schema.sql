@@ -105,3 +105,22 @@ CREATE TABLE IF NOT EXISTS raw_liquidations (
     size        NUMERIC NOT NULL
 );
 SELECT create_hypertable('raw_liquidations', 'ts', if_not_exists => TRUE);
+
+-- Not a hypertable, not raw data, not truncated by data/backup.py — one row
+-- per hypothesis the agent (or a human) proposes, tracked from idea through
+-- backtest to live. Exists specifically to make multiple-testing bias
+-- correctable: n_trials_so_far lets deflated Sharpe be computed against the
+-- true number of hypotheses tried so far, not just the one being scored
+-- (see docs/agentic-quant-plan.md's "Bối cảnh quyết định" section).
+CREATE TABLE IF NOT EXISTS hypothesis_ledger (
+    id               SERIAL PRIMARY KEY,
+    hypothesis_text  TEXT NOT NULL,          -- human/LLM-readable description
+    formalized_rule  JSONB NOT NULL,         -- {condition, horizon, direction, ...} — Phase 4 output
+    date_proposed    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    n_trials_so_far  INTEGER NOT NULL,       -- count of prior hypotheses tested when this one was scored
+    sharpe           NUMERIC,                -- raw backtest Sharpe (Phase 5), NULL until validated
+    deflated_sharpe  NUMERIC,                -- Bailey & López de Prado, adjusted for n_trials_so_far
+    oos_result       JSONB,                  -- walk-forward out-of-sample stats (trades, pnl, drawdown, ...)
+    status           TEXT NOT NULL DEFAULT 'proposed'
+                     CHECK (status IN ('proposed', 'rejected', 'candidate', 'shadow', 'live', 'retired'))
+);
