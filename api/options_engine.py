@@ -415,6 +415,7 @@ def _compute_options_dashboard() -> dict:
             "hvl": levels["hvl"],
             "high_vol_level": levels["hvl"],
             "high_vol_level_0dte": zero_dte_levels["hvl"],
+            "gamma_wall_0dte": zero_dte_levels["max_gex_strike"],
             "day_max": day_max,
             "day_min": day_min,
             "distance_to_hvl_pct": distance_to_hvl_pct,
