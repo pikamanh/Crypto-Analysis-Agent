@@ -104,6 +104,25 @@ def fetch_gex_profile_history(symbol: str, exchange: str, hours: int) -> list[di
     ]
 
 
+def fetch_iv_history(symbol: str, exchange: str, hours: int) -> list[dict]:
+    """30d implied-vol history for `symbol`/`exchange` from the last `hours`
+    hours, oldest first. Pulled from feature_gex_snapshot (one row per ~60s
+    ingest tick, kept indefinitely — unlike feature_gex_profile_snapshot,
+    this table has no retention/pruning), so unlike the GEX Interval Map
+    this doesn't need a client-side accumulator to cover ongoing history —
+    the DB already has it all."""
+    query = """
+        SELECT ts, iv
+        FROM feature_gex_snapshot
+        WHERE symbol = %s AND exchange = %s AND ts >= now() - (%s || ' hours')::interval
+        ORDER BY ts ASC
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(query, (symbol, exchange, hours))
+        rows = cur.fetchall()
+    return [{"ts": ts.isoformat(), "iv": float(iv) if iv is not None else None} for ts, iv in rows]
+
+
 def fetch_latest_ingest_ts(symbol: str, exchange: str) -> datetime | None:
     """Latest feature_gex_snapshot row for `symbol`/`exchange`. That table
     gets a write every ingest tick unconditionally (unlike raw_ohlcv, which

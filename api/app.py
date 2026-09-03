@@ -245,6 +245,33 @@ def gex_profile_history(hours: int = 24, symbol: str | None = None, exchange: st
         raise HTTPException(status_code=502, detail=f"GEX profile history unavailable: {exc}")
 
 
+@app.get("/api/options/iv-history", include_in_schema=False)
+def iv_history(hours: int = 24, symbol: str | None = None, exchange: str | None = None) -> dict:
+    """30d implied-vol history backing the Price chart's IV overlay. Unlike
+    gex_profile_history (client-side accumulator + one-time DB backfill),
+    this is fetched fresh on every poll — feature_gex_snapshot.iv is a
+    single float per row (not a full per-strike chain), so re-querying it
+    every ~30s is cheap and keeps the line correct across reloads/devices
+    with no client-side accumulation logic needed."""
+    if not os.environ.get("DATABASE_URL"):
+        raise HTTPException(status_code=502, detail="IV history unavailable: DATABASE_URL not set.")
+
+    from data.db import fetch_iv_history
+    from data.sources.deribit import EXCHANGE as DEFAULT_EXCHANGE, SYMBOL as DEFAULT_SYMBOL
+
+    symbol = symbol or DEFAULT_SYMBOL
+    exchange = exchange or DEFAULT_EXCHANGE
+    if symbol == DEFAULT_SYMBOL and exchange == DEFAULT_EXCHANGE:
+        _require_btc_enabled()
+
+    try:
+        points = fetch_iv_history(symbol, exchange, hours=min(max(hours, 1), 168))
+        return {"symbol": symbol, "exchange": exchange, "points": points}
+    except Exception as exc:
+        logger.exception("Failed to fetch IV history.")
+        raise HTTPException(status_code=502, detail=f"IV history unavailable: {exc}")
+
+
 @app.get("/api/options/interpretation", include_in_schema=False)
 def options_interpretation() -> dict:
     # BTC-only (agents.option_agent.analyze_option_data hardcodes

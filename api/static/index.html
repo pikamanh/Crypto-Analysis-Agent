@@ -327,6 +327,7 @@
               <span><i class="swatch line" style="border-color:var(--pos); border-top-style:dotted;"></i> PS 0DTE <b id="price-lvl-put-sup-0dte"></b></span>
               <span><i class="swatch line" style="border-color:#c7ccd4"></i> 1D Max <b id="price-lvl-day-max"></b></span>
               <span><i class="swatch line" style="border-color:var(--text-dim)"></i> 1D Min <b id="price-lvl-day-min"></b></span>
+              <span><i class="swatch line" style="border-color:#c77dff"></i> IV (30D) <b id="price-lvl-iv"></b></span>
             </div>
             <div class="chart-wrap">
               <canvas class="chart" id="price-chart" height="420"></canvas>
@@ -605,6 +606,14 @@
   }
 
   var liveGexHistory = loadGexHistoryFromStorage();
+
+  // Implied Vol (30D) history for the Price chart's IV overlay — unlike
+  // liveGexHistory this isn't a client-side accumulator: feature_gex_
+  // snapshot.iv is written every ~60s ingest tick and kept indefinitely
+  // (no retention/pruning, see schema.sql), so the DB already has the full
+  // series. Fetched fresh each poll by refreshIvHistory() below, same as
+  // priceCandles.
+  var priceIvHistory = null;
 
   // GEX Interval Map viewport (zoom/pan) state — kept across redraws/refreshes
   // so a user's zoom isn't reset every 30s poll. Reset (dblclick, or the
@@ -1270,7 +1279,7 @@
     return { tLo: full.tHi - span, tHi: full.tHi };
   }
 
-  function drawPriceChart(canvas, tooltipEl, candles, levels) {
+  function drawPriceChart(canvas, tooltipEl, candles, levels, ivHistory) {
     var dpr = window.devicePixelRatio || 1;
     var cssWidth = canvas.parentElement.clientWidth;
     var cssHeight = CHART_ROW_HEIGHT;
@@ -1314,7 +1323,10 @@
     });
     if (!visible.length) visible = candles;
 
-    var padL = 74, padR = 24, padT = 12, padB = 26;
+    // padR reserves room for the IV (30D) axis labels on the right side —
+    // kept fixed (not conditional on ivHistory having data yet) so the
+    // chart doesn't jump width the moment the first IV point lands.
+    var padL = 74, padR = 54, padT = 12, padB = 26;
     var plotW = cssWidth - padL - padR;
     var plotH = cssHeight - padT - padB;
 
@@ -1332,6 +1344,24 @@
     // by an index-based layout.
     function xAt(t) { return padL + (t - priceView.tLo) / (priceView.tHi - priceView.tLo) * plotW; }
     function yAt(p) { return padT + (1 - (p - lo) / (hi - lo)) * plotH; }
+
+    // IV (30D) overlay: its own right-side Y-axis, scaled to whatever range
+    // of IV values fall inside the current time window — unlike price, IV
+    // has no natural "current +/-1%" band, so this just fits what's visible
+    // with a little headroom instead.
+    var visibleIv = (ivHistory || []).filter(function (s) {
+      var t = new Date(s.ts).getTime();
+      return t >= priceView.tLo && t <= priceView.tHi && s.iv !== null && s.iv !== undefined;
+    });
+    var ivLo = null, ivHi = null;
+    if (visibleIv.length) {
+      var ivVals = visibleIv.map(function (s) { return s.iv; });
+      ivLo = Math.min.apply(null, ivVals);
+      ivHi = Math.max.apply(null, ivVals);
+      if (ivLo === ivHi) { ivLo -= 1; ivHi += 1; } // flat series — avoid a zero-span axis
+      else { var ivPad = (ivHi - ivLo) * 0.15; ivLo -= ivPad; ivHi += ivPad; }
+    }
+    function yAtIv(v) { return padT + (1 - (v - ivLo) / (ivHi - ivLo)) * plotH; }
 
     ctx.strokeStyle = "#1b212a";
     ctx.lineWidth = 1;
@@ -1353,6 +1383,20 @@
       ctx.fillText(fmtUsd0(p), padL - 8, y);
     }
 
+    // IV right-side axis ticks — labels only (no gridlines, to avoid
+    // clashing visually with the price gridlines already drawn above).
+    if (visibleIv.length) {
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#c77dff";
+      var ivTicks = Math.max(2, Math.min(5, Math.round(plotH / 60)));
+      for (var ivI = 0; ivI <= ivTicks; ivI++) {
+        var ivVal = ivLo + (ivHi - ivLo) * (ivI / ivTicks);
+        ctx.fillText(fmtPct(ivVal, 1), cssWidth - padR + 8, yAtIv(ivVal));
+      }
+      ctx.fillStyle = "#5b6472";
+    }
+
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     var tTicks = Math.min(8, Math.max(2, Math.round(plotW / 90)));
@@ -1370,6 +1414,17 @@
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
+
+    if (visibleIv.length) {
+      ctx.strokeStyle = "#c77dff";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      visibleIv.forEach(function (s, i) {
+        var x = xAt(new Date(s.ts).getTime()), y = yAtIv(s.iv);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
     function hline(val, color, dash) {
       if (val === null || val === undefined || val < lo || val > hi) return;
@@ -1398,8 +1453,21 @@
     setLevelLabel("price-lvl-put-sup-0dte", levels.put_support_0dte);
     setLevelLabel("price-lvl-day-max", levels.day_max);
     setLevelLabel("price-lvl-day-min", levels.day_min);
+    var ivLabelEl = document.getElementById("price-lvl-iv");
+    if (ivLabelEl) ivLabelEl.textContent = fmtPct(levels.implied_volatility_30d_pct, 2);
 
-    var points = visible.map(function (c) { return { x: xAt(new Date(c.ts).getTime()), y: yAt(c.close), candle: c }; });
+    var points = visible.map(function (c) {
+      // Nearest IV point (by timestamp) carried along per-candle so the
+      // tooltip can show "what was IV around this time" even though price
+      // candles (1m) and IV samples (~1 per poll) don't share timestamps.
+      var t = new Date(c.ts).getTime();
+      var nearestIv = null, bestIvDist = Infinity;
+      visibleIv.forEach(function (s) {
+        var dist = Math.abs(new Date(s.ts).getTime() - t);
+        if (dist < bestIvDist) { bestIvDist = dist; nearestIv = s.iv; }
+      });
+      return { x: xAt(t), y: yAt(c.close), candle: c, iv: nearestIv };
+    });
     canvas.onmousemove = function (e) {
       var rect = canvas.getBoundingClientRect();
       var mx = e.clientX - rect.left;
@@ -1411,7 +1479,8 @@
       if (nearest && bestDist < 20) {
         var c = nearest.candle;
         tooltipEl.innerHTML = '<div style="color:#fff">' + fmtHHMM(new Date(c.ts)) + '</div>' +
-          '<div>Close: ' + fmtUsd0(c.close) + '</div>';
+          '<div>Close: ' + fmtUsd0(c.close) + '</div>' +
+          (nearest.iv !== null ? '<div style="color:#c77dff">IV: ' + fmtPct(nearest.iv, 2) + '</div>' : '');
         tooltipEl.style.left = Math.min(nearest.x + 14, rect.width - 150) + "px";
         tooltipEl.style.top = Math.max(nearest.y - 30, 0) + "px";
         tooltipEl.classList.add("show");
@@ -1423,7 +1492,7 @@
     canvas.ondblclick = function () {
       priceView = null;
       priceXManual = false; // back to auto-scrolling to the latest candle
-      drawPriceChart(canvas, tooltipEl, candles, levels);
+      drawPriceChart(canvas, tooltipEl, candles, levels, ivHistory);
     };
     if (!canvas.dataset.touchWired) {
       canvas.dataset.touchWired = "1";
@@ -1440,7 +1509,7 @@
         setView: function (lo, hi) { priceView.tLo = lo; priceView.tHi = hi; },
         onChange: function () {
           priceXManual = true; // explicit slider drag — stop auto-scrolling to latest
-          drawPriceChart(canvas, tooltipEl, candles, levels);
+          drawPriceChart(canvas, tooltipEl, candles, levels, ivHistory);
         },
         minSpan: 3 * 60 * 1000,
       });
@@ -2271,7 +2340,7 @@
     renderSettlementCountdown(d);
     renderGexLevels(d);
     redrawGexChart();
-    drawPriceChart(el.priceChart, el.priceTooltip, priceCandles, d.key_levels);
+    drawPriceChart(el.priceChart, el.priceTooltip, priceCandles, d.key_levels, priceIvHistory);
     drawOiChart(el.oiChart, el.oiTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
     drawOiIvChart(el.oiIvChart, el.oiIvTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
     drawIntervalMap(el.intervalChart, el.intervalTooltip, liveGexHistory, d.key_levels.spot_price);
@@ -2335,6 +2404,25 @@
     }
   }
 
+  async function refreshIvHistory() {
+    // IV lives in feature_gex_snapshot, keyed the same way as the GEX data
+    // (cfg.gexSymbol/gexExchange), not the price candles' Yahoo/Binance
+    // symbol — QQQ's IV is tagged symbol="QQQ", exchange="nasdaq" same as
+    // its GEX rows, not exchange="yahoo" like priceCandles.
+    try {
+      var cfg = SYMBOL_CONFIG[currentSymbol];
+      var qs = "hours=24" +
+        (cfg.gexSymbol ? "&symbol=" + encodeURIComponent(cfg.gexSymbol) : "") +
+        (cfg.gexExchange ? "&exchange=" + encodeURIComponent(cfg.gexExchange) : "");
+      var res = await fetch("/api/options/iv-history?" + qs);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      priceIvHistory = d.points;
+    } catch (e) {
+      priceIvHistory = priceIvHistory || [];
+    }
+  }
+
   function accumulateGexSnapshot(d) {
     // Builds the Interval Map's history entirely client-side from the live
     // full per-strike chain (d.net_gex_profile) — NOT from feature_gex_snapshot,
@@ -2386,7 +2474,7 @@
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       if (requestSymbol !== currentSymbol) return; // user switched symbols while this was in flight
-      await refreshPriceHistory();
+      await Promise.all([refreshPriceHistory(), refreshIvHistory()]);
       if (requestSymbol !== currentSymbol) return;
       accumulateGexSnapshot(d);
       renderAll(d);
@@ -2414,6 +2502,7 @@
     currentSymbol = sym;
     latest = null;
     priceCandles = null;
+    priceIvHistory = null;
     liveGexHistory = loadGexHistoryFromStorage();
     el.content.style.display = "none";
     el.loadingRow.style.display = "block";
