@@ -450,12 +450,6 @@
         </div>
       </section>
 
-      <!-- 5. EXPIRATION STRUCTURE -->
-      <section>
-        <p class="section-title">Expiration Structure</p>
-        <div class="exp-grid" id="exp-structure-grid"></div>
-      </section>
-
       <!-- 6 & 6b: OI BY STRIKE + OI x IV BY STRIKE, side by side -->
       <div class="panel-grid">
         <section>
@@ -500,6 +494,12 @@
           </div>
         </section>
       </div>
+
+      <!-- 5. EXPIRATION STRUCTURE -->
+      <section>
+        <p class="section-title">Expiration Structure</p>
+        <div class="exp-grid" id="exp-structure-grid"></div>
+      </section>
 
       <!-- 10. MARKET SIGNALS -->
       <section>
@@ -911,6 +911,7 @@
       ["HVL", k.hvl, "line", "var(--yellow)"],
       ["Spot Price", k.spot_price, "line", "var(--gray-line)"],
       ["Put Support", k.put_support, "line", "var(--pos)"],
+      ["Gamma Wall", k.max_gex_strike, "line", "var(--purple-line)"],
       ["Maximum GEX Strike", k.max_gex_strike, "dot", "var(--yellow)"],
       ["Maximum Call OI Strike", k.max_call_oi_strike, "dot", "var(--pos)"],
       ["Maximum Put OI Strike", k.max_put_oi_strike, "dot", "var(--neg)"],
