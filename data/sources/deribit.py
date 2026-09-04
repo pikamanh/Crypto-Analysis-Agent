@@ -13,9 +13,25 @@ SYMBOL = "BTC"
 EXCHANGE = "deribit"
 
 
-def _feature_row_from_dashboard(dashboard: dict) -> dict:
+def _minute_bucket_ts() -> datetime:
+    """Now, floored to the minute. The poll loop and the external cron tick
+    (see api.app.ingest_tick) both feed this same table and can legitimately
+    fire close together — an in-process instance still warm when the cron
+    lands, or several serverless instances each running their own loop under
+    concurrent traffic. Full-precision timestamps would let every one of
+    those land as its own row (same PK columns, different `ts` down to the
+    microsecond), which is exactly what showed up as near-duplicate,
+    side-by-side points on the GEX Interval Map. Flooring to the minute
+    means two ticks in the same minute share one primary key
+    (ts, symbol, exchange), so insert_rows's ON CONFLICT DO NOTHING keeps
+    only the first — one row per symbol per minute, no matter how many
+    pollers actually fired."""
+    return datetime.now(tz=timezone.utc).replace(second=0, microsecond=0)
+
+
+def _feature_row_from_dashboard(dashboard: dict, ts: datetime | None = None) -> dict:
     kl = dashboard["key_levels"]
-    ts = datetime.now(tz=timezone.utc)
+    ts = ts or _minute_bucket_ts()
 
     row = {
         "ts": ts,
@@ -41,7 +57,7 @@ def _feature_row_from_dashboard(dashboard: dict) -> dict:
     return row
 
 
-def _gex_profile_row_from_dashboard(dashboard: dict, band_pct: float = 0.20) -> dict:
+def _gex_profile_row_from_dashboard(dashboard: dict, band_pct: float = 0.20, ts: datetime | None = None) -> dict:
     spot = dashboard["key_levels"]["spot_price"]
     lo, hi = spot * (1 - band_pct), spot * (1 + band_pct)
     profile = [
@@ -50,7 +66,7 @@ def _gex_profile_row_from_dashboard(dashboard: dict, band_pct: float = 0.20) -> 
         if lo <= r["strike"] <= hi
     ]
     return {
-        "ts": datetime.now(tz=timezone.utc),
+        "ts": ts or _minute_bucket_ts(),
         "symbol": SYMBOL,
         "exchange": EXCHANGE,
         "spot_price": spot,
@@ -74,6 +90,11 @@ def fetch_snapshot_rows(band_pct: float = 0.20) -> Tuple[List[dict], dict]:
     """Combined fetch for the ingest loop's poller: one Deribit REST call
     (get_options_dashboard) feeds both feature_gex_snapshot (top-10 by
     |GEX|) and feature_gex_profile_snapshot (full chain, JSONB) instead of
-    each table doing its own separate poll."""
+    each table doing its own separate poll. Both rows share the same
+    minute-bucketed `ts` (see _minute_bucket_ts) so a redundant poll landing
+    in the same minute — from the in-process loop and the external cron
+    both firing, say — collides on the same primary key and is dropped by
+    ON CONFLICT DO NOTHING instead of adding a second, barely-offset row."""
+    ts = _minute_bucket_ts()
     dashboard = get_options_dashboard()
-    return [_feature_row_from_dashboard(dashboard)], _gex_profile_row_from_dashboard(dashboard, band_pct)
+    return [_feature_row_from_dashboard(dashboard, ts)], _gex_profile_row_from_dashboard(dashboard, band_pct, ts)
