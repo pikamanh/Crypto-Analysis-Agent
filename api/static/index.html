@@ -21,6 +21,7 @@
     --yellow: #e0c526;
     --red-line: #d6483f;
     --gray-line: #808b9a;
+    --purple-line: #8b7bf7;
     --font-sans: -apple-system, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
     --font-mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
   }
@@ -439,6 +440,7 @@
             <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="gex-lvl-call-res"></b></span>
             <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="gex-lvl-put-sup"></b></span>
             <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="gex-lvl-hvl"></b></span>
+            <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="gex-lvl-gamma-wall"></b></span>
             <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="gex-lvl-spot"></b></span>
           </div>
           <div class="chart-wrap">
@@ -467,6 +469,7 @@
               <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="oi-lvl-call-res"></b></span>
               <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="oi-lvl-put-sup"></b></span>
               <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="oi-lvl-hvl"></b></span>
+              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="oi-lvl-gamma-wall"></b></span>
               <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="oi-lvl-spot"></b></span>
             </div>
             <div class="chart-wrap">
@@ -487,6 +490,7 @@
               <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="oiiv-lvl-call-res"></b></span>
               <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="oiiv-lvl-put-sup"></b></span>
               <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="oiiv-lvl-hvl"></b></span>
+              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="oiiv-lvl-gamma-wall"></b></span>
               <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="oiiv-lvl-spot"></b></span>
             </div>
             <div class="chart-wrap">
@@ -935,10 +939,9 @@
     canvas.height = cssHeight * dpr;
     var ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    // Keep the chart legible: focus on strikes within ~45% of spot.
-    var lo = spot * 0.55, hi = spot * 1.55;
+    // Keep the chart legible: focus on strikes within ~1% of spot.
+    var lo = spot * 0.95, hi = spot * 1.05;
     var rows = profile.filter(function (r) { return r.strike >= lo && r.strike <= hi; });
     if (!rows.length) rows = profile.slice();
     rows.sort(function (a, b) { return b.strike - a.strike; }); // highest strike at top
@@ -952,56 +955,73 @@
     var midX = padL + plotW / 2;
     var scale = (plotW / 2 - 6) / maxAbs;
 
-    // gridline at zero
-    ctx.strokeStyle = "#232a35";
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(midX, padT); ctx.lineTo(midX, cssHeight - padB); ctx.stroke();
-
-    var bars = [];
-    rows.forEach(function (r, i) {
-      var y = padT + i * rowH;
-      var barH = Math.max(rowH * 0.62, 2);
-      var w = Math.abs(r.net_gex) * scale;
-      var x = r.net_gex >= 0 ? midX : midX - w;
-      ctx.fillStyle = r.net_gex >= 0 ? "#1fa37b" : "#e0824a";
-      ctx.fillRect(x, y + (rowH - barH) / 2, Math.max(w, 1), barH);
-      bars.push({ x: padL, y: y, w: plotW, h: rowH, strike: r.strike, net_gex: r.net_gex, call_oi: r.call_oi, put_oi: r.put_oi });
-
-      if (i % Math.max(Math.ceil(rows.length / 24), 1) === 0) {
-        ctx.fillStyle = "#5b6472";
-        ctx.font = "10px " + getMonoFont();
-        ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-        ctx.fillText(fmtStrikeShort(r.strike), padL - 8, y + rowH / 2);
-      }
+    var bars = rows.map(function (r, i) {
+      return { x: padL, y: padT + i * rowH, w: plotW, h: rowH, strike: r.strike, net_gex: r.net_gex, call_oi: r.call_oi, put_oi: r.put_oi };
     });
 
-    // reference lines are horizontal (by strike): draw as a highlighted dashed line at strike's y position
-    function hline(strikeVal, color) {
-      if (strikeVal === null || strikeVal === undefined) return;
-      var idx = closestIndex(rows, strikeVal);
-      if (idx === -1) return;
-      var y = padT + idx * rowH + rowH / 2;
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.22;
-      ctx.lineWidth = 7;
-      ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.setLineDash([6, 3]);
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
-      ctx.restore();
+    // Full redraw, called on every hover change: `hoverIdx` (-1 = none)
+    // lights up that strike's row and dims every other one, so the strike
+    // under the cursor stands out against the rest.
+    function render(hoverIdx) {
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+      // gridline at zero
+      ctx.strokeStyle = "#232a35";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(midX, padT); ctx.lineTo(midX, cssHeight - padB); ctx.stroke();
+
+      rows.forEach(function (r, i) {
+        var dim = hoverIdx !== -1 && hoverIdx !== i;
+        var y = padT + i * rowH;
+        var barH = Math.max(rowH * 0.62, 2);
+        var w = Math.abs(r.net_gex) * scale;
+        var x = r.net_gex >= 0 ? midX : midX - w;
+
+        if (hoverIdx === i) {
+          ctx.fillStyle = "rgba(255,255,255,0.06)";
+          ctx.fillRect(padL, y, plotW, rowH);
+        }
+
+        ctx.globalAlpha = dim ? 0.25 : 1;
+        ctx.fillStyle = r.net_gex >= 0 ? "#1fa37b" : "#e0824a";
+        ctx.fillRect(x, y + (rowH - barH) / 2, Math.max(w, 1), barH);
+
+        if (i % Math.max(Math.ceil(rows.length / 24), 1) === 0 || hoverIdx === i) {
+          ctx.fillStyle = hoverIdx === i ? "#e6e8eb" : "#5b6472";
+          ctx.font = "10px " + getMonoFont();
+          ctx.textAlign = "right";
+          ctx.textBaseline = "middle";
+          ctx.fillText(fmtStrikeShort(r.strike), padL - 8, y + rowH / 2);
+        }
+        ctx.globalAlpha = 1;
+      });
+
+      // reference lines are horizontal (by strike): draw as a highlighted dashed line at strike's y position
+      function hline(strikeVal, color) {
+        if (strikeVal === null || strikeVal === undefined) return;
+        var idx = closestIndex(rows, strikeVal);
+        if (idx === -1) return;
+        var y = padT + idx * rowH + rowH / 2;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = hoverIdx !== -1 && hoverIdx !== idx ? 0.35 : 1;
+        ctx.setLineDash([6, 3]);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
+        ctx.restore();
+      }
+      hline(levels.call_resistance, "#d6483f");
+      hline(levels.put_support, "#1fa37b");
+      hline(levels.hvl, "#e0c526");
+      hline(levels.max_gex_strike, "#8b7bf7");
+      hline(spot, "#808b9a");
     }
-    hline(levels.call_resistance, "#d6483f");
-    hline(levels.put_support, "#1fa37b");
-    hline(levels.hvl, "#e0c526");
-    hline(spot, "#808b9a");
+    render(-1);
 
     setLevelLabel("gex-lvl-call-res", levels.call_resistance);
     setLevelLabel("gex-lvl-put-sup", levels.put_support);
     setLevelLabel("gex-lvl-hvl", levels.hvl);
+    setLevelLabel("gex-lvl-gamma-wall", levels.max_gex_strike);
     setLevelLabel("gex-lvl-spot", spot);
 
     attachTooltip(canvas, tooltipEl, bars, function (b) {
@@ -1009,7 +1029,7 @@
         '<div style="color:' + (b.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: $' + fmtLarge(b.net_gex) + '</div>' +
         '<div style="color:var(--pos)">Call OI: ' + fmtLarge(b.call_oi) + '</div>' +
         '<div style="color:var(--neg)">Put OI: ' + fmtLarge(b.put_oi) + '</div>';
-    }, "row");
+    }, "row", render);
   }
 
   function closestIndex(rows, val) {
@@ -1115,14 +1135,17 @@
     }, { passive: false });
   }
 
-  function attachTooltip(canvas, tooltipEl, items, textFn, mode) {
+  // `onHoverIndex(idx)`, when given, is called with the hovered item's index
+  // into `items` (or -1 on miss/leave) — lets bar/column charts redraw with
+  // the hovered strike lit up and the rest dimmed, on top of the tooltip.
+  function attachTooltip(canvas, tooltipEl, items, textFn, mode, onHoverIndex) {
     canvas.onmousemove = function (e) {
       var rect = canvas.getBoundingClientRect();
       var mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      var hit = null;
+      var hit = null, hitIdx = -1;
       for (var i = 0; i < items.length; i++) {
         var b = items[i];
-        if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) { hit = b; break; }
+        if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) { hit = b; hitIdx = i; break; }
       }
       if (hit) {
         tooltipEl.innerHTML = textFn(hit);
@@ -1132,8 +1155,12 @@
       } else {
         tooltipEl.classList.remove("show");
       }
+      if (onHoverIndex) onHoverIndex(hitIdx);
     };
-    canvas.onmouseleave = function () { tooltipEl.classList.remove("show"); };
+    canvas.onmouseleave = function () {
+      tooltipEl.classList.remove("show");
+      if (onHoverIndex) onHoverIndex(-1);
+    };
     if (!canvas.dataset.touchWired) {
       canvas.dataset.touchWired = "1";
       addTouchSupport(canvas, {}); // tap shows the tooltip; no drag/zoom on these charts
@@ -1967,9 +1994,9 @@
     canvas.height = cssHeight * dpr;
     var ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    var lo = spot * 0.55, hi = spot * 1.55;
+    // Keep the chart legible: focus on strikes within ~1% of spot.
+    var lo = spot * 0.95, hi = spot * 1.05;
     var rows = profile.filter(function (r) { return r.strike >= lo && r.strike <= hi; });
     if (!rows.length) rows = profile.slice();
     rows.sort(function (a, b) { return a.strike - b.strike; });
@@ -1981,67 +2008,82 @@
 
     var maxOi = Math.max.apply(null, rows.map(function (r) { return Math.max(r.call_oi, r.put_oi); }).concat([1]));
 
-    ctx.strokeStyle = "#232a35";
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(padL, cssHeight - padB); ctx.lineTo(cssWidth - padR, cssHeight - padB); ctx.stroke();
-
-    // y-axis labels
-    ctx.fillStyle = "#5b6472"; ctx.font = "10px " + getMonoFont(); ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    for (var g = 0; g <= 4; g++) {
-      var val = maxOi * g / 4;
-      var y = cssHeight - padB - (plotH * g / 4);
-      ctx.fillText(fmtLarge(val), padL - 8, y);
-    }
-
-    var bars = [];
-    rows.forEach(function (r, i) {
-      var x0 = padL + i * colW;
-      var barW = Math.max(colW * 0.38, 1);
-      var callH = (r.call_oi / maxOi) * plotH;
-      var putH = (r.put_oi / maxOi) * plotH;
-      ctx.fillStyle = "#1fa37b";
-      ctx.fillRect(x0 + colW * 0.06, cssHeight - padB - callH, barW, callH);
-      ctx.fillStyle = "#e0824a";
-      ctx.fillRect(x0 + colW * 0.52, cssHeight - padB - putH, barW, putH);
-
-      bars.push({ x: x0, y: padT, w: colW, h: plotH, strike: r.strike, call_oi: r.call_oi, put_oi: r.put_oi, net_gex: r.net_gex });
-
-      if (i % Math.max(Math.ceil(rows.length / 16), 1) === 0) {
-        ctx.save();
-        ctx.fillStyle = "#5b6472"; ctx.font = "9.5px " + getMonoFont();
-        ctx.translate(x0 + colW / 2, cssHeight - padB + 14);
-        ctx.rotate(-Math.PI / 5);
-        ctx.textAlign = "right";
-        ctx.fillText(fmtStrikeShort(r.strike), 0, 0);
-        ctx.restore();
-      }
+    var bars = rows.map(function (r, i) {
+      return { x: padL + i * colW, y: padT, w: colW, h: plotH, strike: r.strike, call_oi: r.call_oi, put_oi: r.put_oi, net_gex: r.net_gex };
     });
 
-    function vline(strikeVal, color) {
-      if (strikeVal === null || strikeVal === undefined) return;
-      var idx = closestIndex(rows, strikeVal);
-      if (idx === -1) return;
-      var x = padL + idx * colW + colW / 2;
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.22;
-      ctx.lineWidth = 7;
-      ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.setLineDash([6, 3]);
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
-      ctx.restore();
+    // Full redraw, called on every hover change: `hoverIdx` (-1 = none)
+    // lights up that strike's column and dims every other one.
+    function render(hoverIdx) {
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+      ctx.strokeStyle = "#232a35";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, cssHeight - padB); ctx.lineTo(cssWidth - padR, cssHeight - padB); ctx.stroke();
+
+      // y-axis labels
+      ctx.fillStyle = "#5b6472"; ctx.font = "10px " + getMonoFont(); ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var g = 0; g <= 4; g++) {
+        var val = maxOi * g / 4;
+        var y = cssHeight - padB - (plotH * g / 4);
+        ctx.fillText(fmtLarge(val), padL - 8, y);
+      }
+
+      rows.forEach(function (r, i) {
+        var dim = hoverIdx !== -1 && hoverIdx !== i;
+        var x0 = padL + i * colW;
+        var barW = Math.max(colW * 0.38, 1);
+        var callH = (r.call_oi / maxOi) * plotH;
+        var putH = (r.put_oi / maxOi) * plotH;
+
+        if (hoverIdx === i) {
+          ctx.fillStyle = "rgba(255,255,255,0.06)";
+          ctx.fillRect(x0, padT, colW, plotH);
+        }
+
+        ctx.globalAlpha = dim ? 0.25 : 1;
+        ctx.fillStyle = "#1fa37b";
+        ctx.fillRect(x0 + colW * 0.06, cssHeight - padB - callH, barW, callH);
+        ctx.fillStyle = "#e0824a";
+        ctx.fillRect(x0 + colW * 0.52, cssHeight - padB - putH, barW, putH);
+        ctx.globalAlpha = 1;
+
+        if (i % Math.max(Math.ceil(rows.length / 16), 1) === 0 || hoverIdx === i) {
+          ctx.save();
+          ctx.fillStyle = hoverIdx === i ? "#e6e8eb" : "#5b6472"; ctx.font = "9.5px " + getMonoFont();
+          ctx.translate(x0 + colW / 2, cssHeight - padB + 14);
+          ctx.rotate(-Math.PI / 5);
+          ctx.textAlign = "right";
+          ctx.fillText(fmtStrikeShort(r.strike), 0, 0);
+          ctx.restore();
+        }
+      });
+
+      function vline(strikeVal, color) {
+        if (strikeVal === null || strikeVal === undefined) return;
+        var idx = closestIndex(rows, strikeVal);
+        if (idx === -1) return;
+        var x = padL + idx * colW + colW / 2;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = hoverIdx !== -1 && hoverIdx !== idx ? 0.35 : 1;
+        ctx.setLineDash([6, 3]);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
+        ctx.restore();
+      }
+      vline(levels.call_resistance, "#d6483f");
+      vline(levels.put_support, "#1fa37b");
+      vline(levels.hvl, "#e0c526");
+      vline(levels.max_gex_strike, "#8b7bf7");
+      vline(spot, "#808b9a");
     }
-    vline(levels.call_resistance, "#d6483f");
-    vline(levels.put_support, "#1fa37b");
-    vline(levels.hvl, "#e0c526");
-    vline(spot, "#808b9a");
+    render(-1);
 
     setLevelLabel("oi-lvl-call-res", levels.call_resistance);
     setLevelLabel("oi-lvl-put-sup", levels.put_support);
     setLevelLabel("oi-lvl-hvl", levels.hvl);
+    setLevelLabel("oi-lvl-gamma-wall", levels.max_gex_strike);
     setLevelLabel("oi-lvl-spot", spot);
 
     attachTooltip(canvas, tooltipEl, bars, function (b) {
@@ -2049,7 +2091,7 @@
         '<div style="color:' + (b.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: $' + fmtLarge(b.net_gex) + '</div>' +
         '<div style="color:var(--pos)">Call OI: ' + fmtLarge(b.call_oi) + '</div>' +
         '<div style="color:var(--neg)">Put OI: ' + fmtLarge(b.put_oi) + '</div>';
-    });
+    }, undefined, render);
   }
 
   // OI weighted by implied vol (OI x IV) per strike — same layout as
@@ -2066,9 +2108,9 @@
     canvas.height = cssHeight * dpr;
     var ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    var lo = spot * 0.55, hi = spot * 1.55;
+    // Keep the chart legible: focus on strikes within ~1% of spot.
+    var lo = spot * 0.95, hi = spot * 1.05;
     var rows = profile.filter(function (r) { return r.strike >= lo && r.strike <= hi; });
     if (!rows.length) rows = profile.slice();
     rows.sort(function (a, b) { return a.strike - b.strike; });
@@ -2092,66 +2134,81 @@
 
     var maxOiIv = Math.max.apply(null, rows.map(function (r) { return Math.max(r.call_oiiv, r.put_oiiv); }).concat([1]));
 
-    ctx.strokeStyle = "#232a35";
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(padL, cssHeight - padB); ctx.lineTo(cssWidth - padR, cssHeight - padB); ctx.stroke();
-
-    ctx.fillStyle = "#5b6472"; ctx.font = "10px " + getMonoFont(); ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    for (var g = 0; g <= 4; g++) {
-      var val = maxOiIv * g / 4;
-      var y = cssHeight - padB - (plotH * g / 4);
-      ctx.fillText(fmtLarge(val), padL - 8, y);
-    }
-
-    var bars = [];
-    rows.forEach(function (r, i) {
-      var x0 = padL + i * colW;
-      var barW = Math.max(colW * 0.38, 1);
-      var callH = (r.call_oiiv / maxOiIv) * plotH;
-      var putH = (r.put_oiiv / maxOiIv) * plotH;
-      ctx.fillStyle = "#1fa37b";
-      ctx.fillRect(x0 + colW * 0.06, cssHeight - padB - callH, barW, callH);
-      ctx.fillStyle = "#e0824a";
-      ctx.fillRect(x0 + colW * 0.52, cssHeight - padB - putH, barW, putH);
-
-      bars.push({ x: x0, y: padT, w: colW, h: plotH, strike: r.strike, call_oi: r.call_oi, put_oi: r.put_oi, call_iv: r.call_iv, put_iv: r.put_iv, net_gex: r.net_gex });
-
-      if (i % Math.max(Math.ceil(rows.length / 16), 1) === 0) {
-        ctx.save();
-        ctx.fillStyle = "#5b6472"; ctx.font = "9.5px " + getMonoFont();
-        ctx.translate(x0 + colW / 2, cssHeight - padB + 14);
-        ctx.rotate(-Math.PI / 5);
-        ctx.textAlign = "right";
-        ctx.fillText(fmtStrikeShort(r.strike), 0, 0);
-        ctx.restore();
-      }
+    var bars = rows.map(function (r, i) {
+      return { x: padL + i * colW, y: padT, w: colW, h: plotH, strike: r.strike, call_oi: r.call_oi, put_oi: r.put_oi, call_iv: r.call_iv, put_iv: r.put_iv, net_gex: r.net_gex };
     });
 
-    function vline(strikeVal, color) {
-      if (strikeVal === null || strikeVal === undefined) return;
-      var idx = closestIndex(rows, strikeVal);
-      if (idx === -1) return;
-      var x = padL + idx * colW + colW / 2;
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.22;
-      ctx.lineWidth = 7;
-      ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.setLineDash([6, 3]);
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
-      ctx.restore();
+    // Full redraw, called on every hover change: `hoverIdx` (-1 = none)
+    // lights up that strike's column and dims every other one.
+    function render(hoverIdx) {
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+      ctx.strokeStyle = "#232a35";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, cssHeight - padB); ctx.lineTo(cssWidth - padR, cssHeight - padB); ctx.stroke();
+
+      ctx.fillStyle = "#5b6472"; ctx.font = "10px " + getMonoFont(); ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var g = 0; g <= 4; g++) {
+        var val = maxOiIv * g / 4;
+        var y = cssHeight - padB - (plotH * g / 4);
+        ctx.fillText(fmtLarge(val), padL - 8, y);
+      }
+
+      rows.forEach(function (r, i) {
+        var dim = hoverIdx !== -1 && hoverIdx !== i;
+        var x0 = padL + i * colW;
+        var barW = Math.max(colW * 0.38, 1);
+        var callH = (r.call_oiiv / maxOiIv) * plotH;
+        var putH = (r.put_oiiv / maxOiIv) * plotH;
+
+        if (hoverIdx === i) {
+          ctx.fillStyle = "rgba(255,255,255,0.06)";
+          ctx.fillRect(x0, padT, colW, plotH);
+        }
+
+        ctx.globalAlpha = dim ? 0.25 : 1;
+        ctx.fillStyle = "#1fa37b";
+        ctx.fillRect(x0 + colW * 0.06, cssHeight - padB - callH, barW, callH);
+        ctx.fillStyle = "#e0824a";
+        ctx.fillRect(x0 + colW * 0.52, cssHeight - padB - putH, barW, putH);
+        ctx.globalAlpha = 1;
+
+        if (i % Math.max(Math.ceil(rows.length / 16), 1) === 0 || hoverIdx === i) {
+          ctx.save();
+          ctx.fillStyle = hoverIdx === i ? "#e6e8eb" : "#5b6472"; ctx.font = "9.5px " + getMonoFont();
+          ctx.translate(x0 + colW / 2, cssHeight - padB + 14);
+          ctx.rotate(-Math.PI / 5);
+          ctx.textAlign = "right";
+          ctx.fillText(fmtStrikeShort(r.strike), 0, 0);
+          ctx.restore();
+        }
+      });
+
+      function vline(strikeVal, color) {
+        if (strikeVal === null || strikeVal === undefined) return;
+        var idx = closestIndex(rows, strikeVal);
+        if (idx === -1) return;
+        var x = padL + idx * colW + colW / 2;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = hoverIdx !== -1 && hoverIdx !== idx ? 0.35 : 1;
+        ctx.setLineDash([6, 3]);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
+        ctx.restore();
+      }
+      vline(levels.call_resistance, "#d6483f");
+      vline(levels.put_support, "#1fa37b");
+      vline(levels.hvl, "#e0c526");
+      vline(levels.max_gex_strike, "#8b7bf7");
+      vline(spot, "#808b9a");
     }
-    vline(levels.call_resistance, "#d6483f");
-    vline(levels.put_support, "#1fa37b");
-    vline(levels.hvl, "#e0c526");
-    vline(spot, "#808b9a");
+    render(-1);
 
     setLevelLabel("oiiv-lvl-call-res", levels.call_resistance);
     setLevelLabel("oiiv-lvl-put-sup", levels.put_support);
     setLevelLabel("oiiv-lvl-hvl", levels.hvl);
+    setLevelLabel("oiiv-lvl-gamma-wall", levels.max_gex_strike);
     setLevelLabel("oiiv-lvl-spot", spot);
 
     // The bars alone only ever show OI x IV as one blended magnitude — the
@@ -2173,7 +2230,7 @@
         '<div style="color:' + (b.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: $' + fmtLarge(b.net_gex) + '</div>' +
         '<div style="color:var(--pos)">Call OI×IV: ' + fmtLarge(b.call_oi * (b.call_iv || 0)) + (b.call_iv ? " (IV " + (b.call_iv * 100).toFixed(1) + "%)" : "") + '</div>' +
         '<div style="color:var(--neg)">Put OI×IV: ' + fmtLarge(b.put_oi * (b.put_iv || 0)) + (b.put_iv ? " (IV " + (b.put_iv * 100).toFixed(1) + "%)" : "") + '</div>';
-    });
+    }, undefined, render);
   }
 
   // small strike-profile sparkline for expiration structure cards
@@ -2363,7 +2420,14 @@
   function redrawGexChart() {
     if (!latest) return;
     var levels = currentKeyLevels(latest);
-    drawGexChart(el.gexChart, el.gexTooltip, currentGexProfile(latest), levels, levels.spot_price);
+    var profile = currentGexProfile(latest);
+    drawGexChart(el.gexChart, el.gexTooltip, profile, levels, levels.spot_price);
+    // OI by Strike / OI x IV by Strike share the same expiration selection —
+    // their per-strike call/put OI (and OI×IV) fields live on the same
+    // profile rows as net_gex, so the selected expiration's own CR/PS/HVL/
+    // Gamma Wall (not the aggregate "All Strikes" ones) apply here too.
+    drawOiChart(el.oiChart, el.oiTooltip, profile, levels, levels.spot_price);
+    drawOiIvChart(el.oiIvChart, el.oiIvTooltip, profile, levels, levels.spot_price);
     var entry = currentExpEntry(latest);
     var label = entry ? entry.expiration_date : "All Expirations";
     renderPositioning(Object.assign({}, latest, { positioning: currentPositioning(latest) }), label);
@@ -2529,8 +2593,6 @@
     renderGexLevels(d);
     redrawGexChart();
     drawPriceChart(el.priceChart, el.priceTooltip, priceCandles, d.key_levels, priceIvHistory);
-    drawOiChart(el.oiChart, el.oiTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
-    drawOiIvChart(el.oiIvChart, el.oiIvTooltip, d.oi_profile, d.key_levels, d.key_levels.spot_price);
     drawIntervalMap(el.intervalChart, el.intervalTooltip, liveGexHistory, d.key_levels.spot_price);
     renderExpirationStructure(d);
     renderRegime(d);
