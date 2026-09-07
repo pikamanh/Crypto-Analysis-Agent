@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 from api.options_engine import get_options_dashboard
@@ -24,14 +24,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-STATIC_DIR = Path(__file__).parent / "static"
-
 app = FastAPI(title="Crypto Options Dashboard API", version="1.0.0")
 # The dashboard HTML + its JSON payloads (GEX profile history, OHLCV) are
 # mostly repetitive text/JSON, so gzip cuts transfer size a lot — smaller
 # responses mean a visibly faster first paint, especially over a slow/mobile
 # connection or right after a Render free-tier cold start.
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# The frontend is served separately (Vercel) from this API (Render), so
+# browser requests are cross-origin — without CORS the browser blocks every
+# fetch() with no network-level trace, which is easy to mistake for the API
+# being down. ALLOWED_ORIGINS is a comma-separated list (e.g. the Vercel
+# production domain + any preview-deployment domains); unset means "no
+# frontend origin configured yet", so cross-origin requests stay blocked
+# rather than silently allowing everything.
+_allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if _allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
 
 _liquidation_listener = None
 _market_data_listener = None
@@ -92,16 +106,10 @@ async def stop_ingest() -> None:
         await _market_data_listener.stop()
 
 
-@app.get("/", include_in_schema=False)
-def dashboard() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
-
-
 @app.get("/health", include_in_schema=False)
 def health() -> dict:
-    """Tiny keep-alive target — no DB/file I/O, so it stays fast and small
-    even as the dashboard page grows. Point external uptime/cron pings here,
-    not at "/" (which returns the full dashboard HTML)."""
+    """Tiny keep-alive target — no DB/file I/O, so it stays fast. The
+    dashboard HTML itself is served separately (Vercel), not by this API."""
     return {"status": "ok"}
 
 

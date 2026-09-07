@@ -1,0 +1,16 @@
+.venv
+.git
+.env
+.env.*
+api
+data
+agents
+research
+docs
+scripts
+requirements.txt
+requirements-research.txt
+Dockerfile
+docker-compose.yml
+render.yaml
+ca.pem

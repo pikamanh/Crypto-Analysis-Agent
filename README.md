@@ -14,7 +14,7 @@ those numbers into a plain-language market-structure read.
    exposure per strike (Black-Scholes, since Deribit doesn't publish greeks
    directly), and derives key levels (call resistance, put support, HVL,
    expected move, IV/HV, gamma regime, OI concentration).
-2. **Dashboard** (`api/static/index.html`) — renders that data: GEX by strike,
+2. **Dashboard** (`public/index.html`) — renders that data: GEX by strike,
    open interest by strike, key levels, expiration structure, gamma regime,
    current vs. next week comparison.
 3. **Interpretation agent** (`agents/option_agent.py`) — takes the computed
@@ -29,7 +29,10 @@ Deribit API (public REST)
   └─ options_engine.py → GEX/DEX, key levels, OI concentration
        ├─ /api/options/dashboard        → raw computed data for the dashboard
        └─ agents/option_agent.py (LLM)  → /api/options/interpretation
-FastAPI (api/app.py) serves api/static/index.html + the two endpoints above
+FastAPI (api/app.py, deployed on Render) serves the two endpoints above.
+The dashboard itself (public/index.html) is deployed separately on Vercel
+as a static site and calls the Render API cross-origin (see API_BASE in
+public/index.html and ALLOWED_ORIGINS in render.yaml)
 ```
 
 ## Tech stack
@@ -40,15 +43,16 @@ FastAPI (api/app.py) serves api/static/index.html + the two endpoints above
 | API/Dashboard | FastAPI + static HTML/JS |
 | Options data | Deribit public REST API |
 | LLM | OpenAI-compatible API (`agents/option_agent.py`) |
-| Deployment | Render (`render.yaml`, Docker, free tier, Singapore region) |
+| Deployment | API: Render (`render.yaml`, Docker, free tier, Singapore region). Dashboard: Vercel (`vercel.json`, static). |
 
 ## Project structure
 
 ```
 api/
-  app.py               # FastAPI app — serves dashboard + /api/options/* endpoints
+  app.py               # FastAPI app — /api/options/* endpoints (Render)
   options_engine.py     # Deribit fetch + GEX/DEX/key-level computation
-  static/index.html      # dashboard UI
+public/
+  index.html            # dashboard UI (Vercel static site)
 agents/
   option_agent.py        # LLM interpretation of the computed options data
   system prompt/option.md # system prompt for the interpretation agent

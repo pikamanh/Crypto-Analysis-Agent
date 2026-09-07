@@ -519,6 +519,13 @@
 (function () {
   "use strict";
 
+  // The frontend (Vercel) and the API (Render) are separate deployments now,
+  // so every fetch needs the API's absolute origin instead of a relative
+  // path. Set this to the Render service URL after deploying it; window.API_BASE_URL
+  // lets it be overridden per-environment (e.g. a Vercel env var injected at
+  // build time) without editing this file.
+  var API_BASE = window.API_BASE_URL || "https://YOUR-RENDER-SERVICE.onrender.com";
+
   // 60s instead of 30s: the GEX Interval Map's snapshot (options chain +
   // full Black-Scholes greeks solve) is the slowest thing this poll
   // triggers, and on the deployed (slower/throttled) box it sometimes
@@ -560,7 +567,7 @@
       settlementLabel: "0DTE settlement (08:00 UTC)",
       footerNote: "Data sourced live from Deribit public API (options chain, DVOL, BTC-PERPETUAL). GEX/DEX derived via Black-Scholes using published mark IV — an approximation, not exchange-reported dealer positioning.",
       offlineText: "Kết nối tới Deribit thất bại, đang thử lại…",
-      dashboardEndpoint: "/api/options/dashboard",
+      dashboardEndpoint: API_BASE + "/api/options/dashboard",
       priceSymbol: null, priceExchange: null, // null -> server defaults (Binance BTC)
       gexSymbol: null, gexExchange: null,     // null -> server defaults (Deribit BTC)
       historyStorageKey: "btcOptionsDashboard.liveGexHistory.v1",
@@ -580,7 +587,7 @@
       settlementLabel: "0DTE settlement (~20:00 UTC)",
       footerNote: "Data sourced live from Nasdaq's option-chain and quote APIs (Strike/Bid/Ask/Volume/Open Interest, spot price) and Yahoo Finance (1m price history). Gamma/Delta derived by inverting Black-Scholes from quoted bid/ask (implied vol solve) — an in-house approximation, not exchange-published greeks.",
       offlineText: "Kết nối tới Nasdaq thất bại, đang thử lại…",
-      dashboardEndpoint: "/api/options/qqq-dashboard",
+      dashboardEndpoint: API_BASE + "/api/options/qqq-dashboard",
       priceSymbol: "QQQ", priceExchange: "yahoo",
       gexSymbol: "QQQ", gexExchange: "nasdaq",
       historyStorageKey: "qqqOptionsDashboard.liveGexHistory.v1",
@@ -2364,7 +2371,7 @@
     if (interpFetchInFlight) return;
     interpFetchInFlight = true;
     try {
-      var res = await fetch("/api/options/interpretation");
+      var res = await fetch(API_BASE + "/api/options/interpretation");
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       renderInterpretationText(d.analysis);
@@ -2624,7 +2631,7 @@
       var qs = "hours=" + backfillHours +
         (cfg.gexSymbol ? "&symbol=" + encodeURIComponent(cfg.gexSymbol) : "") +
         (cfg.gexExchange ? "&exchange=" + encodeURIComponent(cfg.gexExchange) : "");
-      var res = await fetch("/api/options/gex-profile-history?" + qs);
+      var res = await fetch(API_BASE + "/api/options/gex-profile-history?" + qs);
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       var byTs = {};
@@ -2646,7 +2653,7 @@
       var qs = "hours=24" +
         (cfg.priceSymbol ? "&symbol=" + encodeURIComponent(cfg.priceSymbol) : "") +
         (cfg.priceExchange ? "&exchange=" + encodeURIComponent(cfg.priceExchange) : "");
-      var res = await fetch("/api/price/history?" + qs);
+      var res = await fetch(API_BASE + "/api/price/history?" + qs);
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       priceCandles = d.candles;
@@ -2665,7 +2672,7 @@
       var qs = "hours=24" +
         (cfg.gexSymbol ? "&symbol=" + encodeURIComponent(cfg.gexSymbol) : "") +
         (cfg.gexExchange ? "&exchange=" + encodeURIComponent(cfg.gexExchange) : "");
-      var res = await fetch("/api/options/iv-history?" + qs);
+      var res = await fetch(API_BASE + "/api/options/iv-history?" + qs);
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       priceIvHistory = d.points;
@@ -2780,7 +2787,7 @@
   // Fetch /api/config before anything ever tries to fetch BTC data, so a
   // BTC_ENABLE=false server never gets a BTC request from this page — not
   // even a reflexive one from a user clicking BTC before the flag lands.
-  fetch("/api/config")
+  fetch(API_BASE + "/api/config")
     .then(function (r) { return r.json(); })
     .then(function (cfg) { btcEnabled = !!cfg.btc_enabled; })
     .catch(function () { btcEnabled = false; })

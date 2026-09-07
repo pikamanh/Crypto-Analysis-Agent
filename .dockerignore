@@ -9,3 +9,6 @@ token.pickle
 storage/trading_state.db
 alert/alerts.jsonl
 scheduler/KILL_SWITCH
+public
+docs
+research
