@@ -50,6 +50,34 @@ if _allowed_origins:
 _liquidation_listener = None
 _market_data_listener = None
 _ingest_task: asyncio.Task | None = None
+_qqq_warm_task: asyncio.Task | None = None
+
+# How often the background loop below recomputes the QQQ dashboard, kept
+# well under qqq_options_engine.get_qqq_options_dashboard's ttl=45s so a
+# request's cache lookup lands on fresh data almost every time.
+_QQQ_WARM_INTERVAL_SECONDS = 20
+
+
+async def _qqq_dashboard_warm_loop() -> None:
+    """Recomputes the QQQ dashboard on a timer, independent of any request.
+
+    Without this, the dashboard's cache only refreshes when a request
+    happens to miss it — and on Render's throttled free-tier CPU, the
+    Black-Scholes IV solve over the full chain (see qqq_options_engine.
+    _build_chain) can take 40-90s. That meant whichever browser request
+    landed on a cache miss ate that whole latency itself, and a second
+    request arriving before the first finished piled another full
+    computation onto the same starved CPU instead of just waiting for the
+    first (see http_cache.py's per-key lock for why concurrent misses
+    don't actually happen anymore, but a *lone* miss still blocks its own
+    request for the full compute). Refreshing proactively here means real
+    requests almost always just read an already-warm cache entry."""
+    while True:
+        try:
+            await asyncio.to_thread(get_qqq_options_dashboard)
+        except Exception:
+            logger.exception("QQQ dashboard warm refresh failed")
+        await asyncio.sleep(_QQQ_WARM_INTERVAL_SECONDS)
 
 
 def _btc_enabled() -> bool:
@@ -63,15 +91,20 @@ def _btc_enabled() -> bool:
 
 @app.on_event("startup")
 async def start_ingest() -> None:
-    """Runs the raw-data ingest loop inside this same web process so it
-    doesn't need a separate (paid) Render Background Worker — it rides on
-    this service's own uptime instead. Only starts if DATABASE_URL is set,
-    so local/dashboard-only runs aren't forced to have a database.
+    """Runs the raw-data ingest loop and the QQQ dashboard warm loop inside
+    this same web process so neither needs a separate (paid) Render
+    Background Worker — both ride on this service's own uptime instead.
+
+    The QQQ warm loop always starts. The raw-data ingest loop only starts
+    if DATABASE_URL is set, so local/dashboard-only runs aren't forced to
+    have a database.
 
     Backups run on a schedule that doesn't depend on this process's uptime —
     see .github/workflows/weekly-db-backup.yml, not an in-process task,
     since a free-tier Render web service sleeps when idle."""
-    global _liquidation_listener, _market_data_listener, _ingest_task
+    global _liquidation_listener, _market_data_listener, _ingest_task, _qqq_warm_task
+    _qqq_warm_task = asyncio.create_task(_qqq_dashboard_warm_loop())
+
     if not os.environ.get("DATABASE_URL"):
         logger.info("DATABASE_URL not set — skipping data ingest, dashboard only.")
         return
@@ -100,6 +133,8 @@ async def start_ingest() -> None:
 async def stop_ingest() -> None:
     if _ingest_task:
         _ingest_task.cancel()
+    if _qqq_warm_task:
+        _qqq_warm_task.cancel()
     if _liquidation_listener:
         await _liquidation_listener.stop()
     if _market_data_listener:

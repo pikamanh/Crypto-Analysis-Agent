@@ -68,7 +68,16 @@ CONTRACT_SIZE = 100.0  # standard US equity/ETF option multiplier (vs. Deribit's
 # as a follow-up.
 RISK_FREE_RATE = 0.04
 
-CHAIN_FETCH_MONTHS_AHEAD = 9  # matches what was verified to return the full multi-expiry chain
+
+# 3 instead of 9: each additional month roughly adds another expiry's worth
+# of strikes to _build_chain's per-contract IV solve (pure-Python
+# Newton-Raphson/bisection), and on Render's throttled free-tier CPU that
+# pushed a single dashboard computation past 60-90s — long enough to blow
+# past the frontend's fetch and even time out outright. Near-term expiries
+# dominate GEX/DEX anyway (far-dated OI is comparatively small), so this
+# trades away the long tail of the chain for a computation that actually
+# finishes.
+CHAIN_FETCH_MONTHS_AHEAD = 3
 
 _CACHE: Dict[str, Tuple[float, Any]] = {}
 
@@ -307,16 +316,18 @@ def get_raw_chain_snapshot() -> Tuple[float, List[dict]]:
 
 def get_qqq_options_dashboard() -> dict:
     """Cached wrapper around _compute_qqq_options_dashboard — see there for
-    what actually gets built. ttl=25s sits just under the frontend's 30s
-    poll interval (REFRESH_MS in index.html), so it still refreshes every
-    poll but collapses any burst of near-simultaneous calls (multiple
-    browser tabs, a request racing the ~60s ingest tick, retried fetches)
-    into a single computation instead of recomputing the whole chain's IV
-    solve + GEX/DEX aggregation from scratch for each one. That recompute is
-    real CPU work, and Render's free-tier CPU is throttled enough that a
-    pile-up of concurrent recomputations was starving every other request
-    (including /health) for minutes at a time."""
-    return _cached_get_raw(_CACHE, "dashboard", ttl=25, fetch_fn=_compute_qqq_options_dashboard)
+    what actually gets built. ttl=45s gives api.app's background warm loop
+    (which calls this every ~20s so real requests hit an already-fresh
+    cache instead of paying for a computation inline) comfortable room to
+    land a refresh before the entry goes stale, while still collapsing any
+    burst of near-simultaneous calls (multiple browser tabs, a request
+    racing the warm loop, retried fetches) into a single computation
+    instead of recomputing the whole chain's IV solve + GEX/DEX aggregation
+    from scratch for each one. That recompute is real CPU work, and
+    Render's free-tier CPU is throttled enough that a pile-up of concurrent
+    recomputations was starving every other request (including /health)
+    for minutes at a time."""
+    return _cached_get_raw(_CACHE, "dashboard", ttl=45, fetch_fn=_compute_qqq_options_dashboard)
 
 
 def _compute_qqq_options_dashboard() -> dict:
