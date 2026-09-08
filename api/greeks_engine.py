@@ -150,7 +150,8 @@ def key_levels(strike_rows: Dict[float, dict], spot: float, rows: Optional[List[
     if not strike_rows:
         return {
             "call_resistance": None, "put_support": None, "hvl": None,
-            "max_gex_strike": None, "max_call_oi_strike": None, "max_put_oi_strike": None,
+            "max_gex_strike": None, "max_dex_strike": None,
+            "max_call_oi_strike": None, "max_put_oi_strike": None,
         }
 
     strikes_sorted = sorted(strike_rows.keys())
@@ -182,6 +183,9 @@ def key_levels(strike_rows: Dict[float, dict], spot: float, rows: Optional[List[
         hvl = min(strikes_sorted, key=lambda k: abs(strike_rows[k]["net_gex"]))
 
     max_gex_strike = max(strikes_sorted, key=lambda k: abs(strike_rows[k]["net_gex"]))
+    # Delta Wall: the strike carrying the largest absolute dealer delta
+    # exposure — the DEX-chart analogue of the Gamma Wall.
+    max_dex_strike = max(strikes_sorted, key=lambda k: abs(strike_rows[k]["net_dex"]))
     max_call_oi_strike = max(strikes_sorted, key=lambda k: strike_rows[k]["call_oi"])
     max_put_oi_strike = max(strikes_sorted, key=lambda k: strike_rows[k]["put_oi"])
 
@@ -190,6 +194,7 @@ def key_levels(strike_rows: Dict[float, dict], spot: float, rows: Optional[List[
         "put_support": put_support,
         "hvl": hvl,
         "max_gex_strike": max_gex_strike,
+        "max_dex_strike": max_dex_strike,
         "max_call_oi_strike": max_call_oi_strike,
         "max_put_oi_strike": max_put_oi_strike,
     }
@@ -199,19 +204,23 @@ def aggregate_by_strike(rows: List[dict]) -> Dict[float, dict]:
     agg: Dict[float, dict] = defaultdict(lambda: {
         "net_gex": 0.0, "call_oi": 0.0, "put_oi": 0.0, "call_gex": 0.0, "put_gex": 0.0,
         "call_oi_iv": 0.0, "put_oi_iv": 0.0,
+        "net_dex": 0.0, "call_dex": 0.0, "put_dex": 0.0,
     })
     for row in rows:
         a = agg[row["strike"]]
         a["net_gex"] += row["gex"]
+        a["net_dex"] += row["dex"]
         iv = row.get("iv") or 0.0
         if row["is_call"]:
             a["call_oi"] += row["oi"]
             a["call_gex"] += row["gex"]
             a["call_oi_iv"] += row["oi"] * iv
+            a["call_dex"] += row["dex"]
         else:
             a["put_oi"] += row["oi"]
             a["put_gex"] += row["gex"]
             a["put_oi_iv"] += row["oi"] * iv
+            a["put_dex"] += row["dex"]
     return dict(agg)
 
 
@@ -222,6 +231,9 @@ def profile_series(strike_rows: Dict[float, dict]) -> List[dict]:
             "net_gex": v["net_gex"],
             "call_gex": v["call_gex"],
             "put_gex": v["put_gex"],
+            "net_dex": v["net_dex"],
+            "call_dex": v["call_dex"],
+            "put_dex": v["put_dex"],
             "call_oi": v["call_oi"],
             "put_oi": v["put_oi"],
             # OI-weighted average IV per strike (call/put), for the "OI x IV

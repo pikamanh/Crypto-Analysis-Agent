@@ -71,8 +71,14 @@
   .section-title {
     font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
     color: var(--text-muted); margin: 0 0 10px; display: flex; align-items: center; gap: 8px;
+    /* Reserves room for an embedded control (e.g. the expiration <select> in
+       the GEX/DEX panel-grid pair) so a title with one and a title without
+       one are the same height — otherwise the card below the shorter title
+       starts a few px higher and the two side-by-side charts look "lệch". */
+    min-height: 26px;
   }
-  .section-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .section-title::after { content: ""; flex: 1; height: 1px; background: var(--border); order: 1; }
+  .section-title select.exp-select { order: 2; text-transform: none; letter-spacing: normal; font-weight: 400; }
 
   .cards { display: grid; gap: 10px; }
   .cards.n8 { grid-template-columns: repeat(8, 1fr); }
@@ -172,7 +178,7 @@
      floor here (sized for the worst-case 2-line subtitle / 2-row legend)
      keeps both cards' header blocks the same height regardless of their
      actual text, so the charts always start at the same y position. */
-  .panel-grid .big-card .chart-sub { min-height: 28px; }
+  .panel-grid .big-card .chart-sub { min-height: 32px; }
   .panel-grid .big-card .legend { min-height: 42px; align-content: flex-start; }
 
   .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
@@ -411,44 +417,47 @@
         </div>
       </section>
 
-      <!-- 2 & 3: Positioning + Key Levels -->
+      <!-- 4. NET GEX MULTI-EXPIRATION + NET DEX MULTI-EXPIRATION, side by side -->
       <div class="panel-grid">
         <section>
-          <p class="section-title">Options Positioning <span id="positioning-sub" style="font-weight:400; color:var(--text-muted);"></span></p>
-          <div class="big-card" id="positioning-card"></div>
+          <p class="section-title">Net GEX Multi-Expiration<select class="exp-select" id="exp-select"></select></p>
+          <div class="big-card">
+            <h2 id="gex-multi-title">NET GEX MULTI-EXPIRATION FOR BTC</h2>
+            <div class="chart-sub">Gamma exposure distribution by strike price. Choose an expiration to inspect, or view the aggregate across all expirations. <b id="gex-multi-0dte"></b></div>
+            <div class="legend">
+              <span><i class="swatch" style="background:var(--pos)"></i> Positive GEX</span>
+              <span><i class="swatch" style="background:var(--neg)"></i> Negative GEX</span>
+              <span><i class="swatch line" style="border-color:var(--red-line)"></i> CR <b id="gex-lvl-call-res"></b></span>
+              <span><i class="swatch line" style="border-color:var(--pos)"></i> PS <b id="gex-lvl-put-sup"></b></span>
+              <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="gex-lvl-hvl"></b></span>
+              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="gex-lvl-gamma-wall"></b></span>
+              <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="gex-lvl-spot"></b></span>
+            </div>
+            <div class="chart-wrap">
+              <canvas class="chart" id="gex-chart" height="460"></canvas>
+              <div class="chart-tooltip" id="gex-tooltip"></div>
+            </div>
+          </div>
         </section>
+
         <section>
-          <p class="section-title">Levels by Expiration <span id="levels-sub" style="font-weight:400; color:var(--text-muted);"></span></p>
-          <div class="big-card" id="levels-card"></div>
+          <p class="section-title">Net DEX Multi-Expiration</p>
+          <div class="big-card">
+            <h2 id="dex-multi-title">NET DEX MULTI-EXPIRATION FOR BTC</h2>
+            <div class="chart-sub">Delta exposure distribution by strike price. Follows the same expiration selection as Net GEX. <b id="dex-multi-0dte"></b></div>
+            <div class="legend">
+              <span><i class="swatch" style="background:var(--pos)"></i> Positive DEX</span>
+              <span><i class="swatch" style="background:var(--neg)"></i> Negative DEX</span>
+              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Delta Wall <b id="dex-lvl-gamma-wall"></b></span>
+              <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="dex-lvl-spot"></b></span>
+            </div>
+            <div class="chart-wrap">
+              <canvas class="chart" id="dex-chart" height="460"></canvas>
+              <div class="chart-tooltip" id="dex-tooltip"></div>
+            </div>
+          </div>
         </section>
       </div>
-
-      <!-- 4. NET GEX MULTI-EXPIRATION -->
-      <section>
-        <p class="section-title">Net GEX Multi-Expiration</p>
-        <div class="big-card">
-          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-            <div>
-              <h2 id="gex-multi-title">NET GEX MULTI-EXPIRATION FOR BTC</h2>
-              <div class="chart-sub">Gamma exposure distribution by strike price. Choose an expiration to inspect, or view the aggregate across all expirations. <b id="gex-multi-0dte"></b></div>
-            </div>
-            <select class="exp-select" id="exp-select"></select>
-          </div>
-          <div class="legend">
-            <span><i class="swatch" style="background:var(--pos)"></i> Positive GEX</span>
-            <span><i class="swatch" style="background:var(--neg)"></i> Negative GEX</span>
-            <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="gex-lvl-call-res"></b></span>
-            <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="gex-lvl-put-sup"></b></span>
-            <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="gex-lvl-hvl"></b></span>
-            <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="gex-lvl-gamma-wall"></b></span>
-            <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="gex-lvl-spot"></b></span>
-          </div>
-          <div class="chart-wrap">
-            <canvas class="chart" id="gex-chart" height="460"></canvas>
-            <div class="chart-tooltip" id="gex-tooltip"></div>
-          </div>
-        </div>
-      </section>
 
       <!-- 6 & 6b: OI BY STRIKE + OI x IV BY STRIKE, side by side -->
       <div class="panel-grid">
@@ -495,6 +504,18 @@
         </section>
       </div>
 
+      <!-- 2b & 3: Options Positioning + Levels by Expiration, side by side (below OI by Strike) -->
+      <div class="panel-grid">
+        <section>
+          <p class="section-title">Options Positioning <span id="positioning-sub" style="font-weight:400; color:var(--text-muted);"></span></p>
+          <div class="big-card" id="positioning-card"></div>
+        </section>
+        <section>
+          <p class="section-title">Levels by Expiration <span id="levels-sub" style="font-weight:400; color:var(--text-muted);"></span></p>
+          <div class="big-card" id="levels-card"></div>
+        </section>
+      </div>
+
       <!-- 5. EXPIRATION STRUCTURE -->
       <section>
         <p class="section-title">Expiration Structure</p>
@@ -524,7 +545,26 @@
   // path. Set this to the Render service URL after deploying it; window.API_BASE_URL
   // lets it be overridden per-environment (e.g. a Vercel env var injected at
   // build time) without editing this file.
-  var API_BASE = window.API_BASE_URL || "https://crypto-dashboard-a19z.onrender.com";
+  //
+  // Local dev override: ?api=http://localhost:8000 in the URL points this
+  // page at a local backend and remembers the choice in localStorage;
+  // ?api=reset (or ?api= with no value) clears it back to the default above.
+  (function () {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      if (params.has("api")) {
+        var apiParam = params.get("api");
+        if (apiParam && apiParam !== "reset") {
+          localStorage.setItem("API_BASE_URL_OVERRIDE", apiParam);
+        } else {
+          localStorage.removeItem("API_BASE_URL_OVERRIDE");
+        }
+      }
+    } catch (e) { /* localStorage unavailable (e.g. private mode) — ignore */ }
+  })();
+  var API_BASE_OVERRIDE = null;
+  try { API_BASE_OVERRIDE = localStorage.getItem("API_BASE_URL_OVERRIDE"); } catch (e) {}
+  var API_BASE = window.API_BASE_URL || API_BASE_OVERRIDE || "https://crypto-dashboard-a19z.onrender.com";
 
   // 60s instead of 30s: the GEX Interval Map's snapshot (options chain +
   // full Black-Scholes greeks solve) is the slowest thing this poll
@@ -562,6 +602,7 @@
       priceChartTitle: "BTC/USDT — LAST 24H",
       priceChartSub: "1m close price (Binance futures), with key options-derived levels overlaid.",
       gexMultiTitle: "NET GEX MULTI-EXPIRATION FOR BTC",
+      dexMultiTitle: "NET DEX MULTI-EXPIRATION FOR BTC",
       intervalTitle: "INTERVAL MAP (GEX) — BTC",
       intervalChartSub: "Gamma exposure by strike over time, built live from each Deribit poll.",
       settlementLabel: "0DTE settlement (08:00 UTC)",
@@ -582,6 +623,7 @@
       priceChartTitle: "QQQ — LAST 24H",
       priceChartSub: "1m close price (Yahoo Finance), with key options-derived levels overlaid.",
       gexMultiTitle: "NET GEX MULTI-EXPIRATION FOR QQQ",
+      dexMultiTitle: "NET DEX MULTI-EXPIRATION FOR QQQ",
       intervalTitle: "INTERVAL MAP (GEX) — QQQ",
       intervalChartSub: "Gamma exposure by strike over time, built live from each Nasdaq poll.",
       settlementLabel: "0DTE settlement (~20:00 UTC)",
@@ -687,6 +729,8 @@
     expSelect: document.getElementById("exp-select"),
     gexChart: document.getElementById("gex-chart"),
     gexTooltip: document.getElementById("gex-tooltip"),
+    dexChart: document.getElementById("dex-chart"),
+    dexTooltip: document.getElementById("dex-tooltip"),
     oiChart: document.getElementById("oi-chart"),
     oiTooltip: document.getElementById("oi-tooltip"),
     oiIvChart: document.getElementById("oiiv-chart"),
@@ -709,11 +753,13 @@
     priceChartTitle: document.getElementById("price-chart-title"),
     priceChartSub: document.getElementById("price-chart-sub"),
     gexMultiTitle: document.getElementById("gex-multi-title"),
+    dexMultiTitle: document.getElementById("dex-multi-title"),
     intervalTitle: document.getElementById("interval-title"),
     intervalChartSub: document.getElementById("interval-chart-sub"),
     intervalPriceLegend: document.getElementById("interval-price-legend"),
     settlementLabel: document.getElementById("settlement-label"),
     gexMulti0dte: document.getElementById("gex-multi-0dte"),
+    dexMulti0dte: document.getElementById("dex-multi-0dte"),
   };
 
   function applySymbolChrome() {
@@ -726,6 +772,7 @@
     el.priceChartTitle.textContent = cfg.priceChartTitle;
     el.priceChartSub.textContent = cfg.priceChartSub;
     el.gexMultiTitle.textContent = cfg.gexMultiTitle;
+    el.dexMultiTitle.textContent = cfg.dexMultiTitle;
     el.intervalTitle.textContent = cfg.intervalTitle;
     el.intervalChartSub.textContent = cfg.intervalChartSub;
     el.intervalPriceLegend.textContent = cfg.label + " Price";
@@ -937,7 +984,14 @@
   // ---------------------------------------------------------------------
   // Canvas chart: horizontal bars, strike on Y axis, GEX on X axis
   // ---------------------------------------------------------------------
-  function drawGexChart(canvas, tooltipEl, profile, levels, spot) {
+  function drawGexChart(canvas, tooltipEl, profile, levels, spot, opts) {
+    opts = opts || {};
+    var metricField = opts.metricField || "net_gex";
+    var idPrefix = opts.idPrefix || "gex";
+    var metricLabel = opts.metricLabel || "Net GEX";
+    var metricUnit = opts.metricUnit || "$";
+    var wallField = opts.wallField || "max_gex_strike";
+    var showCrPsHvl = opts.showCrPsHvl !== false;
     var dpr = window.devicePixelRatio || 1;
     var cssWidth = canvas.parentElement.clientWidth;
     var cssHeight = 460;
@@ -959,12 +1013,12 @@
     var plotH = cssHeight - padT - padB;
     var rowH = plotH / rows.length;
 
-    var maxAbs = Math.max.apply(null, rows.map(function (r) { return Math.abs(r.net_gex); }).concat([1]));
+    var maxAbs = Math.max.apply(null, rows.map(function (r) { return Math.abs(r[metricField]); }).concat([1]));
     var midX = padL + plotW / 2;
     var scale = (plotW / 2 - 6) / maxAbs;
 
     var bars = rows.map(function (r, i) {
-      return { x: padL, y: padT + i * rowH, w: plotW, h: rowH, strike: r.strike, net_gex: r.net_gex, call_oi: r.call_oi, put_oi: r.put_oi };
+      return { x: padL, y: padT + i * rowH, w: plotW, h: rowH, strike: r.strike, metric: r[metricField], call_oi: r.call_oi, put_oi: r.put_oi };
     });
 
     // Full redraw, called on every hover change: `hoverIdx` (-1 = none)
@@ -982,8 +1036,8 @@
         var dim = hoverIdx !== -1 && hoverIdx !== i;
         var y = padT + i * rowH;
         var barH = Math.max(rowH * 0.62, 2);
-        var w = Math.abs(r.net_gex) * scale;
-        var x = r.net_gex >= 0 ? midX : midX - w;
+        var w = Math.abs(r[metricField]) * scale;
+        var x = r[metricField] >= 0 ? midX : midX - w;
 
         if (hoverIdx === i) {
           ctx.fillStyle = "rgba(255,255,255,0.06)";
@@ -991,7 +1045,7 @@
         }
 
         ctx.globalAlpha = dim ? 0.25 : 1;
-        ctx.fillStyle = r.net_gex >= 0 ? "#1fa37b" : "#e0824a";
+        ctx.fillStyle = r[metricField] >= 0 ? "#1fa37b" : "#e0824a";
         ctx.fillRect(x, y + (rowH - barH) / 2, Math.max(w, 1), barH);
 
         if (i % Math.max(Math.ceil(rows.length / 24), 1) === 0 || hoverIdx === i) {
@@ -1018,23 +1072,27 @@
         ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
         ctx.restore();
       }
-      hline(levels.call_resistance, "#d6483f");
-      hline(levels.put_support, "#1fa37b");
-      hline(levels.hvl, "#e0c526");
-      hline(levels.max_gex_strike, "#8b7bf7");
+      if (showCrPsHvl) {
+        hline(levels.call_resistance, "#d6483f");
+        hline(levels.put_support, "#1fa37b");
+        hline(levels.hvl, "#e0c526");
+      }
+      hline(levels[wallField], "#8b7bf7");
       hline(spot, "#808b9a");
     }
     render(-1);
 
-    setLevelLabel("gex-lvl-call-res", levels.call_resistance);
-    setLevelLabel("gex-lvl-put-sup", levels.put_support);
-    setLevelLabel("gex-lvl-hvl", levels.hvl);
-    setLevelLabel("gex-lvl-gamma-wall", levels.max_gex_strike);
-    setLevelLabel("gex-lvl-spot", spot);
+    if (showCrPsHvl) {
+      setLevelLabel(idPrefix + "-lvl-call-res", levels.call_resistance);
+      setLevelLabel(idPrefix + "-lvl-put-sup", levels.put_support);
+      setLevelLabel(idPrefix + "-lvl-hvl", levels.hvl);
+    }
+    setLevelLabel(idPrefix + "-lvl-gamma-wall", levels[wallField]);
+    setLevelLabel(idPrefix + "-lvl-spot", spot);
 
     attachTooltip(canvas, tooltipEl, bars, function (b) {
       return '<div style="color:#fff">Strike ' + fmtStrikeShort(b.strike) + '</div>' +
-        '<div style="color:' + (b.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: $' + fmtLarge(b.net_gex) + '</div>' +
+        '<div style="color:' + (b.metric >= 0 ? "var(--pos)" : "var(--neg)") + '">' + metricLabel + ': ' + metricUnit + fmtLarge(b.metric) + '</div>' +
         '<div style="color:var(--pos)">Call OI: ' + fmtLarge(b.call_oi) + '</div>' +
         '<div style="color:var(--neg)">Put OI: ' + fmtLarge(b.put_oi) + '</div>';
     }, "row", render);
@@ -2387,10 +2445,23 @@
   // ---------------------------------------------------------------------
   var selectedExpiryMs = "ALL";
 
+  var DTE_MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+  function dteLabel(expirationDate) {
+    // expirationDate is formatted "DD Mon YYYY" (server-side fmt_expiry) —
+    // parse it directly rather than relying on index position, since some
+    // calendar days have no expiration (e.g. weekends) and would otherwise
+    // throw off a naive per-row counter.
+    var parts = expirationDate.split(" ");
+    var expUTC = Date.UTC(parseInt(parts[2], 10), DTE_MONTHS[parts[1]], parseInt(parts[0], 10));
+    var todayUTC = (function () { var n = new Date(); return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()); })();
+    var dte = Math.round((expUTC - todayUTC) / 86400000);
+    return Math.max(dte, 0) + "DTE";
+  }
+
   function populateExpSelect(d) {
-    var opts = ['<option value="ALL">All Strikes — Net GEX (aggregate)</option>'];
+    var opts = ['<option value="ALL">All Expiried</option>'];
     d.multi_expiration.forEach(function (e, i) {
-      var label = (i === 0 ? "0DTE — " : "") + e.expiration_date;
+      var label = dteLabel(e.expiration_date) + " - " + e.expiration_date;
       opts.push('<option value="' + e.expiry_ms + '"' + (i === 0 ? " selected" : "") + '>' + label + '</option>');
     });
     var prev = el.expSelect.value;
@@ -2402,6 +2473,10 @@
     if (el.gexMulti0dte) {
       var first = d.multi_expiration[0];
       el.gexMulti0dte.textContent = first ? "0DTE: " + first.expiration_date : "";
+    }
+    if (el.dexMulti0dte) {
+      var firstD = d.multi_expiration[0];
+      el.dexMulti0dte.textContent = firstD ? "0DTE: " + firstD.expiration_date : "";
     }
   }
 
@@ -2430,6 +2505,10 @@
     var levels = currentKeyLevels(latest);
     var profile = currentGexProfile(latest);
     drawGexChart(el.gexChart, el.gexTooltip, profile, levels, levels.spot_price);
+    drawGexChart(el.dexChart, el.dexTooltip, profile, levels, levels.spot_price, {
+      metricField: "net_dex", idPrefix: "dex", metricLabel: "Net DEX", metricUnit: "$",
+      wallField: "max_dex_strike", showCrPsHvl: false,
+    });
     // OI by Strike / OI x IV by Strike share the same expiration selection —
     // their per-strike call/put OI (and OI×IV) fields live on the same
     // profile rows as net_gex, so the selected expiration's own CR/PS/HVL/
