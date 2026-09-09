@@ -128,22 +128,6 @@
     .kl-tile:nth-child(-n+2) { border-top: none; }
   }
 
-  /* GEX Level table (top 10 by absolute GEX) */
-  .gexlvl-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; margin-top: 10px; }
-  .gexlvl-table th {
-    text-align: right; font-family: var(--font-sans); font-size: 10px; text-transform: uppercase;
-    letter-spacing: .06em; color: var(--text-dim); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border);
-  }
-  .gexlvl-table th:first-child, .gexlvl-table td:first-child { text-align: left; }
-  .gexlvl-table td { text-align: right; padding: 8px; border-bottom: 1px solid var(--border); }
-  .gexlvl-table tr:last-child td { border-bottom: none; }
-  .gexlvl-table .rank-badge {
-    display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
-    border-radius: 5px; background: var(--surface-2); color: var(--text-muted); font-size: 11px; font-weight: 700;
-  }
-  .gexlvl-table .pos { color: var(--pos); }
-  .gexlvl-table .neg { color: var(--neg); }
-
   .gamma-pill {
     display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono);
     font-size: 12px; font-weight: 700; padding: 2px 0;
@@ -204,15 +188,6 @@
   canvas.range-slider { width: 100%; display: block; touch-action: none; }
   .range-slider-hint { font-size: 10px; color: var(--text-dim); margin-top: 4px; text-align: center; }
 
-  /* expiration structure 4-up */
-  .exp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-  @media (max-width: 1100px) { .exp-grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 560px) { .exp-grid { grid-template-columns: 1fr; } }
-  .exp-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
-  .exp-card h3 { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; margin: 0 0 2px; color: var(--text); }
-  .exp-card .exp-period { font-size: 10.5px; color: var(--text-dim); font-family: var(--font-mono); margin-bottom: 10px; }
-  .exp-card canvas { height: 110px; margin: 8px 0 10px; }
-
   /* gamma regime */
   .regime-card {
     display: flex; align-items: center; gap: 18px; background: var(--surface);
@@ -271,6 +246,11 @@
     border-radius: 8px; padding: 10px 14px; font-size: 12.5px; font-family: var(--font-mono); margin-bottom: 18px; display: none;
   }
   .err-banner.show { display: block; }
+  .market-closed-banner {
+    background: rgba(128,139,154,.1); border: 1px solid rgba(128,139,154,.3); color: var(--text-muted);
+    border-radius: 8px; padding: 10px 14px; font-size: 12.5px; font-family: var(--font-mono); margin-bottom: 18px; display: none;
+  }
+  .market-closed-banner.show { display: block; }
 </style>
 </head>
 <body>
@@ -297,6 +277,7 @@
     </header>
 
     <div class="err-banner" id="err-banner"></div>
+    <div class="market-closed-banner" id="market-closed-banner"></div>
     <div class="loading-row" id="loading-row">Loading live QQQ options chain from Nasdaq…</div>
 
     <div id="dashboard-content" style="display:none">
@@ -395,28 +376,6 @@
         </section>
       </div>
 
-      <!-- 1b. GEX LEVEL (top 10 by absolute GEX) -->
-      <section>
-        <p class="section-title">GEX Level</p>
-        <div class="big-card">
-          <div class="chart-sub" style="margin-bottom:6px;">Top 10 strikes ranked by absolute gamma exposure (GEX).</div>
-          <table class="gexlvl-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Strike</th>
-                <th>Net GEX</th>
-                <th>Call GEX</th>
-                <th>Put GEX</th>
-                <th>Call OI</th>
-                <th>Put OI</th>
-              </tr>
-            </thead>
-            <tbody id="gex-level-body"></tbody>
-          </table>
-        </div>
-      </section>
-
       <!-- 4. NET GEX MULTI-EXPIRATION + NET DEX MULTI-EXPIRATION, side by side -->
       <div class="panel-grid">
         <section>
@@ -427,10 +386,6 @@
             <div class="legend">
               <span><i class="swatch" style="background:var(--pos)"></i> Positive GEX</span>
               <span><i class="swatch" style="background:var(--neg)"></i> Negative GEX</span>
-              <span><i class="swatch line" style="border-color:var(--red-line)"></i> CR <b id="gex-lvl-call-res"></b></span>
-              <span><i class="swatch line" style="border-color:var(--pos)"></i> PS <b id="gex-lvl-put-sup"></b></span>
-              <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="gex-lvl-hvl"></b></span>
-              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="gex-lvl-gamma-wall"></b></span>
               <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="gex-lvl-spot"></b></span>
             </div>
             <div class="chart-wrap">
@@ -448,7 +403,6 @@
             <div class="legend">
               <span><i class="swatch" style="background:var(--pos)"></i> Positive DEX</span>
               <span><i class="swatch" style="background:var(--neg)"></i> Negative DEX</span>
-              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Delta Wall <b id="dex-lvl-gamma-wall"></b></span>
               <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="dex-lvl-spot"></b></span>
             </div>
             <div class="chart-wrap">
@@ -469,10 +423,6 @@
             <div class="legend">
               <span><i class="swatch" style="background:var(--pos)"></i> Call OI</span>
               <span><i class="swatch" style="background:var(--neg)"></i> Put OI</span>
-              <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="oi-lvl-call-res"></b></span>
-              <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="oi-lvl-put-sup"></b></span>
-              <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="oi-lvl-hvl"></b></span>
-              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="oi-lvl-gamma-wall"></b></span>
               <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="oi-lvl-spot"></b></span>
             </div>
             <div class="chart-wrap">
@@ -486,14 +436,11 @@
           <p class="section-title">OI x IV by Strike</p>
           <div class="big-card">
             <h2>OI X IV BY STRIKE <span id="oiiv-avg-iv" style="font-weight:400; color:var(--text-muted);"></span></h2>
-            <div class="chart-sub">Open interest weighted by implied volatility (OI × IV) per strike — highlights strikes carrying the most vol-weighted exposure, not just raw contract count.</div>
+            <div class="chart-sub">Call vs. put open interest by strike, with the implied volatility skew overlaid as a line (right axis).</div>
             <div class="legend">
-              <span><i class="swatch" style="background:var(--pos)"></i> Call OI×IV</span>
-              <span><i class="swatch" style="background:var(--neg)"></i> Put OI×IV</span>
-              <span><i class="swatch line" style="border-color:var(--red-line)"></i> Call Resistance <b id="oiiv-lvl-call-res"></b></span>
-              <span><i class="swatch line" style="border-color:var(--pos)"></i> Put Support <b id="oiiv-lvl-put-sup"></b></span>
-              <span><i class="swatch line" style="border-color:var(--yellow)"></i> HVL <b id="oiiv-lvl-hvl"></b></span>
-              <span><i class="swatch line" style="border-color:var(--purple-line)"></i> Gamma Wall <b id="oiiv-lvl-gamma-wall"></b></span>
+              <span><i class="swatch" style="background:var(--pos)"></i> Call OI</span>
+              <span><i class="swatch" style="background:var(--neg)"></i> Put OI</span>
+              <span><i class="swatch line" style="border-color:#e6e8eb"></i> IV</span>
               <span><i class="swatch line" style="border-color:var(--gray-line)"></i> Spot Price <b id="oiiv-lvl-spot"></b></span>
             </div>
             <div class="chart-wrap">
@@ -515,12 +462,6 @@
           <div class="big-card" id="levels-card"></div>
         </section>
       </div>
-
-      <!-- 5. EXPIRATION STRUCTURE -->
-      <section>
-        <p class="section-title">Expiration Structure</p>
-        <div class="exp-grid" id="exp-structure-grid"></div>
-      </section>
 
       <!-- 10. MARKET SIGNALS -->
       <section>
@@ -612,6 +553,7 @@
       priceSymbol: null, priceExchange: null, // null -> server defaults (Binance BTC)
       gexSymbol: null, gexExchange: null,     // null -> server defaults (Deribit BTC)
       historyStorageKey: "btcOptionsDashboard.liveGexHistory.v1",
+      marketHours: null, // Deribit/crypto trades 24/7 — no closed session to detect
     },
     qqq: {
       label: "QQQ",
@@ -633,6 +575,12 @@
       priceSymbol: "QQQ", priceExchange: "yahoo",
       gexSymbol: "QQQ", gexExchange: "nasdaq",
       historyStorageKey: "qqqOptionsDashboard.liveGexHistory.v1",
+      // Regular US equity/options session: 9:30am-4:00pm ET, Mon-Fri. Doesn't
+      // account for market holidays (Thanksgiving, Christmas, etc.) — on
+      // those days this will incorrectly think the market is open until
+      // someone wires up a real holiday calendar; acceptable approximation
+      // for now (see the RISK_FREE_RATE-style caveats elsewhere in this file).
+      marketHours: { openHour: 9, openMinute: 30, closeHour: 16, closeMinute: 0 },
     },
   };
   // Always open on QQQ — BTC is opt-in per the server's BTC_ENABLE flag
@@ -717,13 +665,13 @@
     connDot: document.getElementById("conn-dot"),
     metaBlock: document.getElementById("meta-block"),
     errBanner: document.getElementById("err-banner"),
+    marketClosedBanner: document.getElementById("market-closed-banner"),
     loadingRow: document.getElementById("loading-row"),
     content: document.getElementById("dashboard-content"),
     keyLevelsGrid: document.getElementById("key-levels-grid"),
     settlementCountdown: document.getElementById("settlement-countdown"),
     priceChart: document.getElementById("price-chart"),
     priceTooltip: document.getElementById("price-tooltip"),
-    gexLevelBody: document.getElementById("gex-level-body"),
     positioningCard: document.getElementById("positioning-card"),
     levelsCard: document.getElementById("levels-card"),
     expSelect: document.getElementById("exp-select"),
@@ -740,7 +688,6 @@
     intervalRangeSlider: document.getElementById("interval-range-slider"),
     intervalMetricSelect: document.getElementById("interval-metric-select"),
     priceRangeSlider: document.getElementById("price-range-slider"),
-    expStructureGrid: document.getElementById("exp-structure-grid"),
     regimeBadge: document.getElementById("regime-badge"),
     regimeDesc: document.getElementById("regime-desc"),
     interpText: document.getElementById("interp-text"),
@@ -840,6 +787,13 @@
     var node = document.getElementById(id);
     if (node) node.textContent = fmtStrike(val);
   }
+  // Spot price specifically: unlike the derived levels (CR/PS/HVL/...),
+  // which round to whole dollars via fmtStrike, the spot label should show
+  // its real decimal precision rather than getting rounded away.
+  function setSpotLabel(id, val) {
+    var node = document.getElementById(id);
+    if (node) node.textContent = fmtUsd2(val);
+  }
   function fmtTime(ts) {
     if (!ts) return "—";
     return fmtHHMM(new Date(ts * 1000));
@@ -914,23 +868,6 @@
   }
 
   // ---------------------------------------------------------------------
-  // 1b. GEX Level — top 10 strikes by |GEX|
-  // ---------------------------------------------------------------------
-  function renderGexLevels(d) {
-    var rows = d.gex_levels || [];
-    el.gexLevelBody.innerHTML = rows.map(function (r) {
-      return '<tr>' +
-        '<td><span class="rank-badge">' + r.rank + '</span></td>' +
-        '<td>' + fmtStrikeExact(r.strike) + '</td>' +
-        '<td class="' + signClass(r.net_gex) + '">$' + fmtLarge(r.net_gex) + '</td>' +
-        '<td class="pos">$' + fmtLarge(r.call_gex) + '</td>' +
-        '<td class="neg">$' + fmtLarge(r.put_gex) + '</td>' +
-        '<td>' + fmtLarge(r.call_oi) + '</td>' +
-        '<td>' + fmtLarge(r.put_oi) + '</td></tr>';
-    }).join("");
-  }
-
-  // ---------------------------------------------------------------------
   // 2. Options Positioning
   // ---------------------------------------------------------------------
   function renderPositioning(d, expLabel) {
@@ -990,8 +927,6 @@
     var idPrefix = opts.idPrefix || "gex";
     var metricLabel = opts.metricLabel || "Net GEX";
     var metricUnit = opts.metricUnit || "$";
-    var wallField = opts.wallField || "max_gex_strike";
-    var showCrPsHvl = opts.showCrPsHvl !== false;
     var dpr = window.devicePixelRatio || 1;
     var cssWidth = canvas.parentElement.clientWidth;
     var cssHeight = 460;
@@ -1072,23 +1007,13 @@
         ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssWidth - padR, y); ctx.stroke();
         ctx.restore();
       }
-      if (showCrPsHvl) {
-        hline(levels.call_resistance, "#d6483f");
-        hline(levels.put_support, "#1fa37b");
-        hline(levels.hvl, "#e0c526");
-      }
-      hline(levels[wallField], "#8b7bf7");
+      // CR/PS/HVL/Gamma-Wall/Delta-Wall reference lines removed by request —
+      // only the spot price line stays.
       hline(spot, "#808b9a");
     }
     render(-1);
 
-    if (showCrPsHvl) {
-      setLevelLabel(idPrefix + "-lvl-call-res", levels.call_resistance);
-      setLevelLabel(idPrefix + "-lvl-put-sup", levels.put_support);
-      setLevelLabel(idPrefix + "-lvl-hvl", levels.hvl);
-    }
-    setLevelLabel(idPrefix + "-lvl-gamma-wall", levels[wallField]);
-    setLevelLabel(idPrefix + "-lvl-spot", spot);
+    setSpotLabel(idPrefix + "-lvl-spot", spot);
 
     attachTooltip(canvas, tooltipEl, bars, function (b) {
       return '<div style="color:#fff">Strike ' + fmtStrikeShort(b.strike) + '</div>' +
@@ -1374,7 +1299,8 @@
   // ---------------------------------------------------------------------
   function priceDataExtent(candles) {
     var allTs = candles.map(function (c) { return new Date(c.ts).getTime(); });
-    var tLo = Math.min.apply(null, allTs), tHi = Math.max.apply(null, allTs);
+    var dataHi = Math.max.apply(null, allTs);
+    var tLo = Math.min.apply(null, allTs), tHi = dataHi;
     var pad = (tHi - tLo) * 0.02 || 60000;
     tLo -= pad; tHi += pad;
     // Same floor as the Interval Map: keep the full extent at least 30
@@ -1383,12 +1309,18 @@
     // handful of candles across the full chart width.
     var minSpan = 30 * 60 * 1000;
     if (tHi - tLo < minSpan) tHi = tLo + minSpan;
-    return { tLo: tLo, tHi: tHi };
+    // dataHi (the real latest candle's timestamp, unpadded) is kept
+    // alongside tHi (padded, used for the slider's background extent) so
+    // the default/auto-follow views below can pin to the actual newest
+    // data instead of to empty trailing padding — with a 24h fetch window,
+    // that 2% pad is ~29 minutes, which used to eat almost the entire
+    // 30-minute follow window and leave real candles stuck off to the left.
+    return { tLo: tLo, tHi: tHi, dataHi: dataHi };
   }
 
   function defaultPriceView(full) {
-    var span = Math.min(30 * 60 * 1000, full.tHi - full.tLo);
-    return { tLo: full.tHi - span, tHi: full.tHi };
+    var span = Math.min(30 * 60 * 1000, full.dataHi - full.tLo);
+    return { tLo: full.dataHi - span, tHi: full.dataHi };
   }
 
   function drawPriceChart(canvas, tooltipEl, candles, levels, ivHistory) {
@@ -1415,9 +1347,11 @@
     if (!priceView) priceView = defaultPriceView(priceFullExtent);
     else if (!priceXManual) {
       // Auto-follow: keep the current zoom span but re-pin its right edge to
-      // the newest candle, so new polls scroll into view on their own.
+      // the newest candle (not the padded full extent — see priceDataExtent),
+      // so new polls scroll into view on their own instead of sitting behind
+      // ~29 minutes of empty trailing padding.
       var followSpan = priceView.tHi - priceView.tLo;
-      priceView = { tLo: priceFullExtent.tHi - followSpan, tHi: priceFullExtent.tHi };
+      priceView = { tLo: priceFullExtent.dataHi - followSpan, tHi: priceFullExtent.dataHi };
     } else {
       var tSpan = priceView.tHi - priceView.tLo;
       if (tSpan > priceFullExtent.tHi - priceFullExtent.tLo) priceView = { tLo: priceFullExtent.tLo, tHi: priceFullExtent.tHi };
@@ -1673,7 +1607,13 @@
         setView: function (lo, hi) { priceView.tLo = lo; priceView.tHi = hi; },
         onChange: function () {
           priceXManual = true; // explicit slider drag — stop auto-scrolling to latest
-          drawPriceChart(canvas, tooltipEl, candles, levels, ivHistory);
+          // Re-read the live module-level state, not candles/levels/ivHistory
+          // captured by this closure — the slider is wired up only once
+          // (see `if (!priceSliderDraw)` above), so a closure over those
+          // params would keep redrawing whatever data was current on the
+          // very first draw forever after, snapping back to stale data on
+          // every drag/click regardless of how many polls have landed since.
+          drawPriceChart(canvas, tooltipEl, priceCandles, latest ? latest.key_levels : levels, priceIvHistory);
         },
         minSpan: 3 * 60 * 1000,
       });
@@ -1918,9 +1858,9 @@
       ctx.font = "10px " + getMonoFont();
       ctx.textAlign = "left";
       ctx.textBaseline = "bottom";
-      ctx.fillText(SYMBOL_CONFIG[currentSymbol].label + " " + fmtUsd0(spot), padL + 4, sy - 3);
+      ctx.fillText(SYMBOL_CONFIG[currentSymbol].label + " " + fmtUsd2(spot), padL + 4, sy - 3);
     }
-    setLevelLabel("interval-lvl-spot", spot);
+    setSpotLabel("interval-lvl-spot", spot);
 
     ctx.strokeStyle = "#232a35";
     ctx.lineWidth = 1;
@@ -2138,19 +2078,13 @@
         ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
         ctx.restore();
       }
-      vline(levels.call_resistance, "#d6483f");
-      vline(levels.put_support, "#1fa37b");
-      vline(levels.hvl, "#e0c526");
-      vline(levels.max_gex_strike, "#8b7bf7");
+      // CR/PS/HVL/Gamma-Wall reference lines removed by request — only the
+      // spot price line stays.
       vline(spot, "#808b9a");
     }
     render(-1);
 
-    setLevelLabel("oi-lvl-call-res", levels.call_resistance);
-    setLevelLabel("oi-lvl-put-sup", levels.put_support);
-    setLevelLabel("oi-lvl-hvl", levels.hvl);
-    setLevelLabel("oi-lvl-gamma-wall", levels.max_gex_strike);
-    setLevelLabel("oi-lvl-spot", spot);
+    setSpotLabel("oi-lvl-spot", spot);
 
     attachTooltip(canvas, tooltipEl, bars, function (b) {
       return '<div style="color:#fff">Strike ' + fmtStrikeShort(b.strike) + '</div>' +
@@ -2160,10 +2094,11 @@
     }, undefined, render);
   }
 
-  // OI weighted by implied vol (OI x IV) per strike — same layout as
-  // drawOiChart, but bar height is call_oi*call_iv / put_oi*put_iv instead
-  // of raw OI. call_iv/put_iv are the OI-weighted average IV per strike
-  // from greeks_engine.profile_series (null when that side has no OI there).
+  // OI by strike, call vs. put — same bars as drawOiChart — with the
+  // implied volatility skew overlaid as a line on a secondary (right) axis.
+  // This is NOT "OI weighted by IV" (bar height isn't call_oi*call_iv); the
+  // line is IV per strike, kept independent of the OI bars, so the vol
+  // skew is visible directly instead of being blended into bar height.
   function drawOiIvChart(canvas, tooltipEl, profile, levels, spot) {
     var dpr = window.devicePixelRatio || 1;
     var cssWidth = canvas.parentElement.clientWidth;
@@ -2181,6 +2116,13 @@
     if (!rows.length) rows = profile.slice();
     rows.sort(function (a, b) { return a.strike - b.strike; });
     rows = rows.map(function (r) {
+      // Blend call/put IV into one per-strike value for the line — most
+      // strikes carry both, but near the edges of the chain only one side
+      // may have open interest (and therefore a quoted IV).
+      var iv = null;
+      if (r.call_iv && r.put_iv) iv = (r.call_iv + r.put_iv) / 2;
+      else if (r.call_iv) iv = r.call_iv;
+      else if (r.put_iv) iv = r.put_iv;
       return {
         strike: r.strike,
         net_gex: r.net_gex,
@@ -2188,20 +2130,27 @@
         put_oi: r.put_oi,
         call_iv: r.call_iv,
         put_iv: r.put_iv,
-        call_oiiv: r.call_oi * (r.call_iv || 0),
-        put_oiiv: r.put_oi * (r.put_iv || 0),
+        iv: iv,
       };
     });
 
-    var padL = 56, padR = 16, padT = 10, padB = 30;
+    var padL = 56, padR = 44, padT = 10, padB = 30;
     var plotW = cssWidth - padL - padR;
     var plotH = cssHeight - padT - padB;
     var colW = plotW / rows.length;
 
-    var maxOiIv = Math.max.apply(null, rows.map(function (r) { return Math.max(r.call_oiiv, r.put_oiiv); }).concat([1]));
+    var maxOi = Math.max.apply(null, rows.map(function (r) { return Math.max(r.call_oi, r.put_oi); }).concat([1]));
+
+    var ivRows = rows.filter(function (r) { return r.iv !== null; });
+    var ivMin = ivRows.length ? Math.min.apply(null, ivRows.map(function (r) { return r.iv; })) : 0;
+    var ivMax = ivRows.length ? Math.max.apply(null, ivRows.map(function (r) { return r.iv; })) : 1;
+    if (ivMax === ivMin) { ivMin -= 0.01; ivMax += 0.01; }
+    var ivPad = (ivMax - ivMin) * 0.15;
+    ivMin -= ivPad; ivMax += ivPad;
+    function ivY(iv) { return cssHeight - padB - ((iv - ivMin) / (ivMax - ivMin)) * plotH; }
 
     var bars = rows.map(function (r, i) {
-      return { x: padL + i * colW, y: padT, w: colW, h: plotH, strike: r.strike, call_oi: r.call_oi, put_oi: r.put_oi, call_iv: r.call_iv, put_iv: r.put_iv, net_gex: r.net_gex };
+      return { x: padL + i * colW, y: padT, w: colW, h: plotH, strike: r.strike, call_oi: r.call_oi, put_oi: r.put_oi, call_iv: r.call_iv, put_iv: r.put_iv, iv: r.iv, net_gex: r.net_gex };
     });
 
     // Full redraw, called on every hover change: `hoverIdx` (-1 = none)
@@ -2213,19 +2162,27 @@
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(padL, cssHeight - padB); ctx.lineTo(cssWidth - padR, cssHeight - padB); ctx.stroke();
 
+      // left axis: raw OI (bars)
       ctx.fillStyle = "#5b6472"; ctx.font = "10px " + getMonoFont(); ctx.textAlign = "right"; ctx.textBaseline = "middle";
       for (var g = 0; g <= 4; g++) {
-        var val = maxOiIv * g / 4;
+        var val = maxOi * g / 4;
         var y = cssHeight - padB - (plotH * g / 4);
         ctx.fillText(fmtLarge(val), padL - 8, y);
+      }
+      // right axis: IV % (line)
+      ctx.fillStyle = "#8a8fb0"; ctx.textAlign = "left";
+      for (var g2 = 0; g2 <= 4; g2++) {
+        var ivVal = ivMin + (ivMax - ivMin) * g2 / 4;
+        var y2 = cssHeight - padB - (plotH * g2 / 4);
+        ctx.fillText((ivVal * 100).toFixed(1) + "%", cssWidth - padR + 8, y2);
       }
 
       rows.forEach(function (r, i) {
         var dim = hoverIdx !== -1 && hoverIdx !== i;
         var x0 = padL + i * colW;
         var barW = Math.max(colW * 0.38, 1);
-        var callH = (r.call_oiiv / maxOiIv) * plotH;
-        var putH = (r.put_oiiv / maxOiIv) * plotH;
+        var callH = (r.call_oi / maxOi) * plotH;
+        var putH = (r.put_oi / maxOi) * plotH;
 
         if (hoverIdx === i) {
           ctx.fillStyle = "rgba(255,255,255,0.06)";
@@ -2250,6 +2207,33 @@
         }
       });
 
+      // IV skew line, plotted on the right axis, independent of the bars.
+      if (ivRows.length > 1) {
+        ctx.save();
+        ctx.strokeStyle = "#e6e8eb";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        var started = false;
+        rows.forEach(function (r, i) {
+          if (r.iv === null) return;
+          var x = padL + i * colW + colW / 2;
+          var y = ivY(r.iv);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.restore();
+
+        if (hoverIdx !== -1 && rows[hoverIdx] && rows[hoverIdx].iv !== null) {
+          ctx.save();
+          ctx.fillStyle = "#e6e8eb";
+          ctx.beginPath();
+          ctx.arc(padL + hoverIdx * colW + colW / 2, ivY(rows[hoverIdx].iv), 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
       function vline(strikeVal, color) {
         if (strikeVal === null || strikeVal === undefined) return;
         var idx = closestIndex(rows, strikeVal);
@@ -2263,127 +2247,30 @@
         ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, cssHeight - padB); ctx.stroke();
         ctx.restore();
       }
-      vline(levels.call_resistance, "#d6483f");
-      vline(levels.put_support, "#1fa37b");
-      vline(levels.hvl, "#e0c526");
-      vline(levels.max_gex_strike, "#8b7bf7");
+      // CR/PS/HVL/Gamma-Wall reference lines removed by request — only the
+      // spot price line stays.
       vline(spot, "#808b9a");
     }
     render(-1);
 
-    setLevelLabel("oiiv-lvl-call-res", levels.call_resistance);
-    setLevelLabel("oiiv-lvl-put-sup", levels.put_support);
-    setLevelLabel("oiiv-lvl-hvl", levels.hvl);
-    setLevelLabel("oiiv-lvl-gamma-wall", levels.max_gex_strike);
-    setLevelLabel("oiiv-lvl-spot", spot);
+    setSpotLabel("oiiv-lvl-spot", spot);
 
-    // The bars alone only ever show OI x IV as one blended magnitude — the
-    // IV factor itself isn't visible anywhere without hovering a tooltip.
-    // Surface it directly in the title as an OI-weighted average across the
-    // strikes actually plotted, so "where's the IV" has an answer at a glance.
-    var ivNum = 0, ivDen = 0;
-    rows.forEach(function (r) {
-      if (r.call_iv) { ivNum += r.call_oi * r.call_iv; ivDen += r.call_oi; }
-      if (r.put_iv) { ivNum += r.put_oi * r.put_iv; ivDen += r.put_oi; }
-    });
     var avgIvEl = document.getElementById("oiiv-avg-iv");
     if (avgIvEl) {
+      var ivNum = 0, ivDen = 0;
+      rows.forEach(function (r) {
+        if (r.call_iv) { ivNum += r.call_oi * r.call_iv; ivDen += r.call_oi; }
+        if (r.put_iv) { ivNum += r.put_oi * r.put_iv; ivDen += r.put_oi; }
+      });
       avgIvEl.textContent = ivDen > 0 ? "· Avg IV " + (ivNum / ivDen * 100).toFixed(1) + "%" : "";
     }
 
     attachTooltip(canvas, tooltipEl, bars, function (b) {
-      return '<div style="color:#fff">Strike ' + fmtStrikeShort(b.strike) + '</div>' +
+      return '<div style="color:#fff">Strike ' + fmtStrikeShort(b.strike) + (b.iv !== null ? " · IV " + (b.iv * 100).toFixed(1) + "%" : "") + '</div>' +
         '<div style="color:' + (b.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: $' + fmtLarge(b.net_gex) + '</div>' +
-        '<div style="color:var(--pos)">Call OI×IV: ' + fmtLarge(b.call_oi * (b.call_iv || 0)) + (b.call_iv ? " (IV " + (b.call_iv * 100).toFixed(1) + "%)" : "") + '</div>' +
-        '<div style="color:var(--neg)">Put OI×IV: ' + fmtLarge(b.put_oi * (b.put_iv || 0)) + (b.put_iv ? " (IV " + (b.put_iv * 100).toFixed(1) + "%)" : "") + '</div>';
+        '<div style="color:var(--pos)">Call OI: ' + fmtLarge(b.call_oi) + '</div>' +
+        '<div style="color:var(--neg)">Put OI: ' + fmtLarge(b.put_oi) + '</div>';
     }, undefined, render);
-  }
-
-  // small strike-profile sparkline for expiration structure cards
-  function drawMiniProfile(canvas, tooltipEl, profile, spot) {
-    var dpr = window.devicePixelRatio || 1;
-    var cssWidth = canvas.parentElement.clientWidth;
-    var cssHeight = 110;
-    canvas.style.width = cssWidth + "px"; canvas.style.height = cssHeight + "px";
-    canvas.width = cssWidth * dpr; canvas.height = cssHeight * dpr;
-    var ctx = canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
-    if (!profile || !profile.length) {
-      ctx.fillStyle = "#5b6472"; ctx.font = "11px " + getMonoFont(); ctx.textAlign = "center";
-      ctx.fillText("no strikes in range", cssWidth / 2, cssHeight / 2);
-      return;
-    }
-    var lo = spot * 0.6, hi = spot * 1.4;
-    var rows = profile.filter(function (r) { return r.strike >= lo && r.strike <= hi; });
-    if (!rows.length) rows = profile.slice();
-    rows.sort(function (a, b) { return a.strike - b.strike; });
-    var padT = 6, padB = 4;
-    var plotH = cssHeight - padT - padB;
-    var colW = cssWidth / rows.length;
-    var maxAbs = Math.max.apply(null, rows.map(function (r) { return Math.abs(r.net_gex); }).concat([1]));
-    var midY = padT + plotH / 2;
-    var bars = [];
-    rows.forEach(function (r, i) {
-      var x = i * colW;
-      var h = (Math.abs(r.net_gex) / maxAbs) * (plotH / 2 - 2);
-      ctx.fillStyle = r.net_gex >= 0 ? "#1fa37b" : "#e0824a";
-      var barW = Math.max(colW * 0.7, 1);
-      if (r.net_gex >= 0) ctx.fillRect(x + colW * 0.15, midY - h, barW, h);
-      else ctx.fillRect(x + colW * 0.15, midY, barW, h);
-      bars.push({ x: x, y: padT, w: colW, h: plotH, strike: r.strike, net_gex: r.net_gex, call_oi: r.call_oi, put_oi: r.put_oi });
-    });
-    ctx.strokeStyle = "#232a35"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(cssWidth, midY); ctx.stroke();
-
-    if (tooltipEl) {
-      attachTooltip(canvas, tooltipEl, bars, function (b) {
-        return '<div style="color:#fff">Strike ' + fmtStrikeShort(b.strike) + '</div>' +
-          '<div style="color:' + (b.net_gex >= 0 ? "var(--pos)" : "var(--neg)") + '">Net GEX: $' + fmtLarge(b.net_gex) + '</div>' +
-          '<div style="color:var(--pos)">Call OI: ' + fmtLarge(b.call_oi) + '</div>' +
-          '<div style="color:var(--neg)">Put OI: ' + fmtLarge(b.put_oi) + '</div>';
-      });
-    }
-  }
-
-  // ---------------------------------------------------------------------
-  // 5. Expiration Structure (4 cards)
-  // ---------------------------------------------------------------------
-  function expBlockHtml(block, spot) {
-    if (!block) {
-      return '<div class="exp-card"><h3>—</h3><div class="exp-period">no data</div></div>';
-    }
-    var rows = [
-      ["GEX", "$" + fmtLarge(block.gex), signClass(block.gex)],
-      ["GEX Expiring %", fmtPct(block.gex_expiring_pct, 1), ""],
-      ["Call Resistance", fmtStrike(block.call_resistance), ""],
-      ["Put Support", fmtStrike(block.put_support), ""],
-      ["HVL", fmtStrike(block.hvl), ""],
-      ["Spot Price", fmtStrike(block.spot), ""],
-    ];
-    var periodLine = block.expiration_date
-      ? block.expiration_date + (block.time_to_expiration_hours !== undefined ? " · T-" + fmtHours(block.time_to_expiration_hours) : "")
-      : (block.period || "—");
-    return '<div class="exp-card">' +
-      '<h3>' + block.label + '</h3>' +
-      '<div class="exp-period">' + periodLine + '</div>' +
-      '<div class="chart-wrap"><canvas class="mini-profile"></canvas><div class="chart-tooltip"></div></div>' +
-      rows.map(function (r) {
-        return '<div class="kv-row" style="padding:5px 0;font-size:11.5px"><span class="k">' + r[0] + '</span><span class="v ' + r[2] + '">' + r[1] + '</span></div>';
-      }).join("") +
-      '</div>';
-  }
-
-  function renderExpirationStructure(d) {
-    var s = d.expiration_structure;
-    var spot = d.key_levels.spot_price;
-    var blocks = [s.first_expiration, s.next_expiration, s.current_week, s.next_week];
-    el.expStructureGrid.innerHTML = blocks.map(function (b) { return expBlockHtml(b, spot); }).join("");
-    var canvases = el.expStructureGrid.querySelectorAll("canvas.mini-profile");
-    var tooltips = el.expStructureGrid.querySelectorAll(".chart-tooltip");
-    blocks.forEach(function (b, i) {
-      if (b && canvases[i]) drawMiniProfile(canvases[i], tooltips[i], b.profile, spot);
-    });
   }
 
   // ---------------------------------------------------------------------
@@ -2507,12 +2394,10 @@
     drawGexChart(el.gexChart, el.gexTooltip, profile, levels, levels.spot_price);
     drawGexChart(el.dexChart, el.dexTooltip, profile, levels, levels.spot_price, {
       metricField: "net_dex", idPrefix: "dex", metricLabel: "Net DEX", metricUnit: "$",
-      wallField: "max_dex_strike", showCrPsHvl: false,
     });
     // OI by Strike / OI x IV by Strike share the same expiration selection —
     // their per-strike call/put OI (and OI×IV) fields live on the same
-    // profile rows as net_gex, so the selected expiration's own CR/PS/HVL/
-    // Gamma Wall (not the aggregate "All Strikes" ones) apply here too.
+    // profile rows as net_gex.
     drawOiChart(el.oiChart, el.oiTooltip, profile, levels, levels.spot_price);
     drawOiIvChart(el.oiIvChart, el.oiIvTooltip, profile, levels, levels.spot_price);
     var entry = currentExpEntry(latest);
@@ -2565,7 +2450,7 @@
     var fmt = new Intl.DateTimeFormat("en-US", {
       timeZone: "America/New_York",
       year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", hour12: false,
+      hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false,
     });
     var parts = {};
     fmt.formatToParts(new Date()).forEach(function (p) { parts[p.type] = p.value; });
@@ -2575,6 +2460,61 @@
     var p = getEtParts();
     return p.year + "-" + p.month + "-" + p.day;
   }
+
+  // ---------------------------------------------------------------------
+  // Market-closed detection (QQQ only — BTC/Deribit trades 24/7)
+  //
+  // The backend has no concept of "market closed": it just keeps polling
+  // Nasdaq's live endpoints every ~45s regardless of the time of day, so
+  // after the 4pm ET close the numbers it returns are not a clean, single
+  // EOD snapshot — QQQ's spot can keep drifting on after-hours ETF prints
+  // while the option chain's bid/ask has already gone blank and fallen
+  // back to each contract's last traded price (see the comment in
+  // api/qqq_options_engine.py's _build_chain), and OI itself doesn't
+  // actually settle to today's numbers until Nasdaq's overnight update.
+  // Rather than pretend that blend is a trustworthy EOD figure, once the
+  // session's closed this just freezes polling and labels whatever was
+  // last fetched as "last update before close" instead of implying it's
+  // live.
+  // ---------------------------------------------------------------------
+  function isMarketOpenEt(symbol) {
+    var hours = SYMBOL_CONFIG[symbol] && SYMBOL_CONFIG[symbol].marketHours;
+    if (!hours) return true; // no session hours configured (BTC) -> always "open"
+    var p = getEtParts();
+    if (p.weekday === "Sat" || p.weekday === "Sun") return false;
+    // Intl reports midnight as "24" in some engines — normalize to 0.
+    var hour = parseInt(p.hour, 10) % 24;
+    var minutesSinceMidnight = hour * 60 + parseInt(p.minute, 10);
+    var openMin = hours.openHour * 60 + hours.openMinute;
+    var closeMin = hours.closeHour * 60 + hours.closeMinute;
+    return minutesSinceMidnight >= openMin && minutesSinceMidnight < closeMin;
+  }
+
+  // Client-side wall-clock time of the last successful fetch for the
+  // currently-shown symbol — not a backend timestamp, since api/qqq_
+  // options_engine.py's meta.*_ts fields are just the poll time, not a
+  // real measure of how stale the underlying quotes are (see the comment
+  // above isMarketOpenEt). This is the most honest "as of" we can show.
+  var lastFetchedAt = null;
+
+  function updateMarketClosedBanner() {
+    if (isMarketOpenEt(currentSymbol)) {
+      el.marketClosedBanner.classList.remove("show");
+      return;
+    }
+    var asOf = lastFetchedAt
+      ? new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
+        }).format(lastFetchedAt) + " ET"
+      : "—";
+    el.marketClosedBanner.innerHTML =
+      "Thị trường QQQ đã đóng cửa (phiên chính 9:30–16:00 ET, Thứ Hai–Thứ Sáu). " +
+      "Dữ liệu đang hiển thị là lần cập nhật gần nhất trước khi đóng cửa (" + asOf + "), " +
+      "không tiếp tục tự động làm mới cho tới phiên kế tiếp — spot/OI/IV sau giờ đóng cửa " +
+      "không đảm bảo là một bức tranh EOD nhất quán, đồng bộ (xem giải thích ở footer).";
+    el.marketClosedBanner.classList.add("show");
+  }
+
   function isBeforeKeyLevelFreezeEt() {
     var p = getEtParts();
     // Intl reports midnight as "24" in some engines — normalize to 0.
@@ -2677,11 +2617,9 @@
     populateExpSelect(d);
     renderKeyLevelsGrid(d);
     renderSettlementCountdown(d);
-    renderGexLevels(d);
     redrawGexChart();
     drawPriceChart(el.priceChart, el.priceTooltip, priceCandles, d.key_levels, priceIvHistory);
     drawIntervalMap(el.intervalChart, el.intervalTooltip, liveGexHistory, d.key_levels.spot_price);
-    renderExpirationStructure(d);
     renderRegime(d);
     // BTC-only (no QQQ equivalent on the backend) — only fetch/show it while
     // actually viewing BTC, so QQQ's default view never touches BTC data.
@@ -2804,6 +2742,18 @@
 
   async function refresh() {
     if (refreshInFlight) return;
+    // Once the market's closed and a snapshot is already on screen, stop
+    // re-polling Nasdaq — every poll after close would just restate the
+    // same last-session numbers under a "fresh" current spot print (see
+    // isMarketOpenEt's comment), which looks live without actually being a
+    // trustworthy new statement of the session that just closed. Still
+    // re-check (and re-render the banner's "as of" wording) every tick so
+    // the badge shows up immediately and the moment the next session opens
+    // polling resumes on its own — no reopen-specific logic needed.
+    if (currentSymbol !== "btc" && !isMarketOpenEt(currentSymbol) && latest) {
+      updateMarketClosedBanner();
+      return;
+    }
     refreshInFlight = true;
     var requestSymbol = currentSymbol; // guard against a toggle firing mid-fetch
     try {
@@ -2813,8 +2763,10 @@
       if (requestSymbol !== currentSymbol) return; // user switched symbols while this was in flight
       await Promise.all([refreshPriceHistory(), refreshIvHistory()]);
       if (requestSymbol !== currentSymbol) return;
+      lastFetchedAt = new Date();
       accumulateGexSnapshot(d);
       renderAll(d);
+      updateMarketClosedBanner();
     } catch (e) {
       if (requestSymbol !== currentSymbol) return;
       el.connDot.classList.add("off");
@@ -2840,10 +2792,12 @@
     latest = null;
     priceCandles = null;
     priceIvHistory = null;
+    lastFetchedAt = null;
     liveGexHistory = loadGexHistoryFromStorage();
     el.content.style.display = "none";
     el.loadingRow.style.display = "block";
     el.errBanner.classList.remove("show");
+    el.marketClosedBanner.classList.remove("show");
     if (sym !== "btc") el.interpText.innerHTML = "<p>Không khả dụng cho QQQ.</p>";
     applySymbolChrome();
     backfillGexHistoryFromDb().then(refresh);
