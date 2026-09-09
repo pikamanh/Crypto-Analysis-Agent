@@ -77,7 +77,7 @@ RISK_FREE_RATE = 0.04
 # dominate GEX/DEX anyway (far-dated OI is comparatively small), so this
 # trades away the long tail of the chain for a computation that actually
 # finishes.
-CHAIN_FETCH_MONTHS_AHEAD = 3
+CHAIN_FETCH_MONTHS_AHEAD = 9
 
 _CACHE: Dict[str, Tuple[float, Any]] = {}
 
@@ -221,17 +221,32 @@ def _build_chain(spot: float) -> List[dict]:
         if t_years <= 0:
             continue
 
-        for is_call, bid_key, ask_key, oi_key, vol_key in (
-            (True, "c_Bid", "c_Ask", "c_Openinterest", "c_Volume"),
-            (False, "p_Bid", "p_Ask", "p_Openinterest", "p_Volume"),
+        for is_call, bid_key, ask_key, last_key, oi_key, vol_key in (
+            (True, "c_Bid", "c_Ask", "c_Last", "c_Openinterest", "c_Volume"),
+            (False, "p_Bid", "p_Ask", "p_Last", "p_Openinterest", "p_Volume"),
         ):
             oi = _num(raw.get(oi_key)) or 0.0
             if oi <= 0:
                 continue
             bid, ask = _num(raw.get(bid_key)), _num(raw.get(ask_key))
-            if bid is None or ask is None or ask <= 0 or bid > ask:
-                continue
-            mid_price = (bid + ask) / 2.0
+            if bid is not None and ask is not None and ask > 0 and bid <= ask:
+                mid_price = (bid + ask) / 2.0
+            else:
+                # Pre-/after-market: Nasdaq's live bid/ask comes back blank
+                # ("--") for most strikes until the session actually opens,
+                # even though open interest (end-of-day, from the prior
+                # close) is already populated for hundreds of them. Without
+                # this fallback, only the handful of strikes that happen to
+                # already carry a live quote would survive the filter above,
+                # making the chain look far sparser than it really is. Fall
+                # back to the last traded price (previous close) so the
+                # chart still shows a full EOD snapshot; once bid/ask
+                # populate at the open, every strike goes back to pricing
+                # off its live mid on the next fetch.
+                last = _num(raw.get(last_key))
+                if last is None or last <= 0:
+                    continue
+                mid_price = last
 
             sigma = _implied_vol(mid_price, spot, strike, t_years, is_call, RISK_FREE_RATE)
             if sigma is None or sigma <= 0:
@@ -283,15 +298,21 @@ def get_raw_chain_snapshot() -> Tuple[float, List[dict]]:
             continue
         expiry_ms, strike = parsed
         t_years = max((expiry_ms / 1000.0 - now), 0.0) / (365.0 * 86400.0)
-        for is_call, bid_key, ask_key, oi_key, vol_key in (
-            (True, "c_Bid", "c_Ask", "c_Openinterest", "c_Volume"),
-            (False, "p_Bid", "p_Ask", "p_Openinterest", "p_Volume"),
+        for is_call, bid_key, ask_key, last_key, oi_key, vol_key in (
+            (True, "c_Bid", "c_Ask", "c_Last", "c_Openinterest", "c_Volume"),
+            (False, "p_Bid", "p_Ask", "p_Last", "p_Openinterest", "p_Volume"),
         ):
             oi = _num(raw.get(oi_key)) or 0.0
             if oi <= 0:
                 continue
             bid, ask = _num(raw.get(bid_key)), _num(raw.get(ask_key))
-            mid_price = (bid + ask) / 2.0 if (bid is not None and ask is not None and ask > 0 and bid <= ask) else None
+            if bid is not None and ask is not None and ask > 0 and bid <= ask:
+                mid_price = (bid + ask) / 2.0
+            else:
+                # Same pre-/after-market fallback as _build_chain (see there)
+                # — fall back to last traded price when live bid/ask is blank.
+                last = _num(raw.get(last_key))
+                mid_price = last if (last is not None and last > 0) else None
             sigma = (
                 _implied_vol(mid_price, spot, strike, t_years, is_call, RISK_FREE_RATE)
                 if (mid_price is not None and t_years > 0) else None
